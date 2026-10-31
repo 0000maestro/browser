@@ -102,6 +102,7 @@ classified = execute._classify_traffic_state(
 assert [item["request_id"] for item in classified["blocking"]] == ["fetch"]
 assert [item["request_id"] for item in classified["stale"]] == ["stale"]
 assert {item["request_id"] for item in classified["persistent"]} == {"events", "ws"}
+assert classified["carryover"] == []
 assert execute._counter_delta(
     {"failed": 2, "http_error": 1},
     {"failed": 1, "http_error": 0},
@@ -240,6 +241,29 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert busy is not None
     assert busy["settle"]["outcome"] == "timeout_busy"
     assert busy["settle"]["blocking"][0]["request_id"] == "busy"
+
+    busy_cursor = {
+        "seq": busy["through_seq"],
+        "target_counters": {},
+        "counters": {"started": 2, "finished": 1, "failed": 0, "http_error": 0, "redirected": 0},
+        "carryover_keys": ["page:busy"],
+    }
+    carried, _ = execute._traffic_boundary(
+        payload=payload,
+        step=step,
+        step_status="passed",
+        cursor=busy_cursor,
+        policy={
+            "quiet_seconds": 0.01,
+            "max_wait_seconds": 0.03,
+            "stale_after_seconds": 10.0,
+            "poll_seconds": 0.005,
+        },
+    )
+    assert carried is not None
+    assert carried["settle"]["outcome"] == "quiet_with_carryover"
+    assert carried["settle"]["blocking"] == []
+    assert carried["settle"]["carryover"][0]["request_id"] == "busy"
 
     write_state(
         state_path,

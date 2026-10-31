@@ -123,10 +123,13 @@ def _classify_traffic_state(
     now_epoch: float,
     stale_after_seconds: float,
     target_id: str | None = None,
+    carryover_keys: set[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     blocking: list[dict[str, Any]] = []
     stale: list[dict[str, Any]] = []
     persistent: list[dict[str, Any]] = []
+    carryover: list[dict[str, Any]] = []
+    carried = carryover_keys or set()
 
     for request in state.get("active_requests", []):
         if target_id and request.get("target_id") != target_id:
@@ -134,6 +137,9 @@ def _classify_traffic_state(
         item = _traffic_item(request, now_epoch)
         if request.get("type") in PERSISTENT_RESOURCE_TYPES:
             persistent.append(item)
+            continue
+        if request.get("key") in carried:
+            carryover.append(item)
             continue
 
         started_at = request.get("started_at")
@@ -152,6 +158,7 @@ def _classify_traffic_state(
         "blocking": blocking,
         "stale": stale,
         "persistent": persistent,
+        "carryover": carryover,
     }
 
 
@@ -186,7 +193,7 @@ def _traffic_counters(state: dict[str, Any], target_id: str | None) -> dict[str,
 
 
 def _traffic_cursor(payload: dict[str, Any]) -> dict[str, Any]:
-    cursor = {"seq": 0, "target_counters": {}}
+    cursor = {"seq": 0, "target_counters": {}, "carryover_keys": []}
     if not payload.get("capture_traffic"):
         return cursor
 
@@ -205,6 +212,7 @@ def _traffic_cursor(payload: dict[str, Any]) -> dict[str, Any]:
             for key, value in (state.get("target_counters") or {}).items()
         },
         "counters": dict(state.get("counters") or {}),
+        "carryover_keys": [],
     }
 
 
@@ -246,7 +254,7 @@ def _traffic_boundary(
     quiet_since: float | None = None
     last_lifecycle: int | None = None
     final_state: dict[str, Any] | None = None
-    final_classification = {"blocking": [], "stale": [], "persistent": []}
+    final_classification = {"blocking": [], "stale": [], "persistent": [], "carryover": []}
     outcome = "unavailable"
     error: str | None = None
 
@@ -270,6 +278,7 @@ def _traffic_boundary(
                 now_epoch=now_epoch,
                 stale_after_seconds=settings["stale_after_seconds"],
                 target_id=target_id,
+                carryover_keys=set(cursor.get("carryover_keys") or []),
             )
             lifecycle = _traffic_lifecycle_seq(state, target_id)
             now_mono = time.monotonic()
@@ -282,7 +291,11 @@ def _traffic_boundary(
                 if now_mono - quiet_since >= settings["quiet_seconds"]:
                     outcome = (
                         "quiet_with_carryover"
-                        if final_classification["stale"] or final_classification["persistent"]
+                        if (
+                            final_classification["stale"]
+                            or final_classification["persistent"]
+                            or final_classification["carryover"]
+                        )
                         else "quiet"
                     )
                     break
@@ -313,6 +326,21 @@ def _traffic_boundary(
         global_counters = dict(final_state.get("counters") or {})
         lifecycle_seq = _traffic_lifecycle_seq(final_state, target_id)
 
+    carryover_keys = set(cursor.get("carryover_keys") or [])
+    if final_state is not None:
+        active_keys = {
+            str(item.get("key"))
+            for item in final_state.get("active_requests", [])
+            if item.get("key")
+        }
+        carryover_keys.intersection_update(active_keys)
+    if outcome == "timeout_busy":
+        carryover_keys.update(
+            str(item["key"])
+            for item in final_classification["blocking"]
+            if item.get("key")
+        )
+
     boundary = {
         "schema": "uklok.browser.traffic-checkpoint/v1",
         "automation": payload["automation"],
@@ -335,6 +363,7 @@ def _traffic_boundary(
             "blocking": final_classification["blocking"],
             "stale": final_classification["stale"],
             "persistent": final_classification["persistent"],
+            "carryover": final_classification["carryover"],
             "error": error,
         },
     }
@@ -350,6 +379,7 @@ def _traffic_boundary(
         "seq": current_seq,
         "target_counters": current_target_counters,
         "counters": global_counters,
+        "carryover_keys": sorted(carryover_keys),
     }
 
 
