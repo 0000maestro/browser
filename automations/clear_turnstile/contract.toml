@@ -1,0 +1,88 @@
+schema = "uklok.browser.automation/v1"
+id = "clear_turnstile"
+version = 1
+status = "ready"
+intent = "On the single visible tab, click the Cloudflare Turnstile checkbox once and wait until that iframe is gone."
+module = "run.py"
+
+[trigger]
+description = "The single visible tab is stopped on a Cloudflare Turnstile interstitial and a caller wants that same tab to show the page behind it."
+
+[authority]
+allowed = [
+  "Attach the one HTTP(S) page tab that is already visible.",
+  "Click the Turnstile checkbox on that tab once.",
+  "Wait for that tab to show the page behind the interstitial.",
+]
+forbidden = [
+  "Choose among several visible pages.",
+  "Open a new tab.",
+  "Navigate, reload, or change the tab URL.",
+  "Read, copy, or replay the Turnstile response token.",
+  "Call an external solver.",
+  "Click the checkbox a second time.",
+  "Type credentials.",
+  "Submit a form on the page behind the interstitial.",
+]
+
+[[preconditions]]
+id = "browser_ready"
+condition = "UKLOK Browser is healthy and Browser Use is attached through BU_CDP_URL to the existing Chrome. Do not launch another browser."
+
+[[preconditions]]
+id = "visible_tab"
+condition = "Exactly one HTTP(S) page is visible. This run does not choose a different URL and does not pick among several visible pages."
+
+[[algorithm]]
+id = "attach_visible_tab"
+pseudocode = """
+COUNT the HTTP(S) page tabs whose document is visible.
+IF that count is not exactly one, STOP.
+ATTACH that one tab.
+DO NOT activate a hidden tab.
+DO NOT open a tab.
+DO NOT navigate.
+"""
+checkpoint = "Exactly one HTTP(S) page is visible, that tab is attached, and its URL is recorded."
+on_failure = "Stop. Zero or several visible pages is not the one page the human is looking at."
+resume = "safe"
+known_variants = [
+  "Browser Use may be attached to a hidden tab from an earlier run. Visibility, not attachment order, chooses the tab.",
+  "The active tab of a second window can also report itself visible. Enumeration order is not a choice.",
+]
+
+[[algorithm]]
+id = "click_verify"
+pseudocode = """
+COUNT the visible HTTP(S) pages again. Do not trust the tab attached by an earlier step.
+IF that count is not exactly one, STOP. Do not click.
+ATTACH that one tab.
+A Turnstile iframe has a src containing challenges.cloudflare.com and turnstile.
+Page querySelector does not see that iframe. The pierced DOM does.
+The interstitial title is "Just a moment..." or a title that starts with "Challenge".
+An empty title is not an interstitial title.
+IF the Turnstile iframe node is already absent and the title is not an interstitial title, do nothing.
+A Turnstile iframe node that has no box is still present. It is not success and it is not yet a click.
+WAIT until that iframe has a box. A missing box, including "Could not compute box model.", is not a click.
+CLICK once, about 28px from the iframe's left edge and vertically centered.
+WAIT until the Turnstile iframe node is absent and the title is not an interstitial title.
+An empty title is success only after that iframe node is gone.
+DO NOT click a second time.
+DO NOT read the hidden cf-turnstile-response input.
+"""
+checkpoint = "The single visible tab has no Turnstile iframe node, and its title is not an interstitial title. An empty title passes only when the iframe node is gone."
+on_failure = "Stop on this tab. Do not click again, reload, or invent a token."
+resume = "safe"
+known_variants = [
+  "The checkbox lives in a cross-origin iframe. A coordinate click on the iframe box reaches it.",
+  "The iframe node can exist before it has a box. That node is still the interstitial.",
+  "A second click while verification is still running puts the checkbox back, so this step never clicks twice.",
+  "The document title can be empty, or unreadable, while the page behind the interstitial replaces the document. The iframe node being gone is what makes that moment success.",
+]
+
+[success]
+condition = "The single visible tab no longer contains a Turnstile iframe, and it is not showing an interstitial title."
+
+[failure]
+capture_screenshot = true
+agent_skill = ".agents/skills/browser-automation/SKILL.md"

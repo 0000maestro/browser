@@ -12,6 +12,24 @@ def _visible(tab):
     return js("document.visibilityState") == "visible"
 
 
+def _recorded(tab, visible):
+    return {"url": tab.get("url"), "visible": visible}
+
+
+def _one_visible_tab():
+    matches = []
+    seen = []
+    for tab in _pages():
+        visible = _visible(tab)
+        seen.append(_recorded(tab, visible))
+        if visible:
+            matches.append(tab)
+    if len(matches) != 1:
+        return None, seen
+    switch_tab(matches[0], activate=False)
+    return matches[0], seen
+
+
 def _attrs(node):
     raw = node.get("attributes") or []
     return dict(zip(raw[0::2], raw[1::2]))
@@ -40,32 +58,27 @@ def _turnstile_iframe():
     return found[0] if found else None
 
 
-def _title():
+def _read(expression):
     try:
-        return str(js("document.title") or "")
+        value = js(expression)
     except RuntimeError:
-        return ""
+        return None
+    return "" if value is None else str(value)
+
+
+def _title():
+    return _read("document.title")
 
 
 def _url():
-    try:
-        return str(js("location.href") or "")
-    except RuntimeError:
-        return ""
+    return _read("location.href")
 
 
 def _interstitial_title(title):
-    folded = title.casefold().strip()
-    return folded.startswith("just a moment") or folded.startswith("challenge") or folded == ""
-
-
-def _cleared():
-    try:
-        if _interstitial_title(_title()):
-            return False
-        return _checkbox() is None
-    except RuntimeError:
+    if title is None:
         return False
+    folded = title.casefold().strip()
+    return folded.startswith("just a moment") or folded.startswith("challenge")
 
 
 def _iframe_box(backend):
@@ -84,45 +97,50 @@ def _iframe_box(backend):
     return {"x": left + 28, "y": (top + bottom) / 2, "width": right - left, "height": bottom - top}
 
 
-def _checkbox():
-    backend = _turnstile_iframe()
+def _iframe_state():
+    try:
+        backend = _turnstile_iframe()
+    except RuntimeError:
+        return "unreadable"
     if backend is None:
-        return None
-    return _iframe_box(backend)
+        return "absent"
+    if _iframe_box(backend) is None:
+        return "present"
+    return "boxed"
+
+
+def _cleared():
+    try:
+        if _turnstile_iframe() is not None:
+            return False
+    except RuntimeError:
+        return False
+    title = _title()
+    if title is None:
+        return True
+    return not _interstitial_title(title)
 
 
 def _click_checkbox():
-    point = _checkbox()
+    backend = _turnstile_iframe()
+    if backend is None:
+        return None
+    point = _iframe_box(backend)
     if point is None:
         return None
     click_at_xy(point["x"], point["y"])
     return point
 
 
+def _page():
+    return {"url": _url(), "title": _title(), "iframe": _iframe_state()}
+
+
 def step_attach_visible_tab(ctx):
-    chosen = None
-    seen = []
-    for tab in _pages():
-        visible = _visible(tab)
-        seen.append({"url": tab.get("url"), "visible": visible})
-        if visible and chosen is None:
-            chosen = tab
+    chosen, seen = _one_visible_tab()
     if chosen is None:
         return {"ok": False, "observed": {"tabs": seen}}
-    switch_tab(chosen, activate=False)
-    info = page_info()
-    return {
-        "ok": True,
-        "observed": {"url": info.get("url"), "title": info.get("title"), "tabs": seen},
-    }
-
-
-def _status():
-    try:
-        text = js("(() => { const el = document.getElementById('pSku8'); return el ? el.innerText : '' })()")
-    except RuntimeError:
-        return ""
-    return str(text or "")
+    return {"ok": True, "observed": {**_page(), "tabs": seen}}
 
 
 def _wait_until_clear(seconds):
@@ -135,8 +153,12 @@ def _wait_until_clear(seconds):
 
 
 def step_click_verify(ctx):
+    chosen, seen = _one_visible_tab()
+    if chosen is None:
+        return {"ok": False, "observed": {"tabs": seen, "clicked": False}}
+
     if _cleared():
-        return {"ok": True, "observed": {"title": _title(), "clicked": False}}
+        return {"ok": True, "observed": {**_page(), "clicked": False, "tabs": seen}}
 
     point = None
     for _ in range(20):
@@ -145,19 +167,9 @@ def step_click_verify(ctx):
             break
         wait(0.5)
     if point is None:
-        return {"ok": False, "observed": {"title": _title(), "clicked": False, "status": _status()}}
-
-    if _wait_until_clear(15):
-        return {"ok": True, "observed": {"title": _title(), "url": _url(), "clicked": True, "point": point}}
-
-    again = _click_checkbox()
-    if again is not None:
-        point = again
+        return {"ok": False, "observed": {**_page(), "clicked": False, "tabs": seen}}
 
     if _wait_until_clear(20):
-        return {"ok": True, "observed": {"title": _title(), "url": _url(), "clicked": True, "point": point}}
+        return {"ok": True, "observed": {**_page(), "clicked": True, "point": point, "tabs": seen}}
 
-    return {
-        "ok": False,
-        "observed": {"title": _title(), "url": _url(), "clicked": True, "point": point, "status": _status()},
-    }
+    return {"ok": False, "observed": {**_page(), "clicked": True, "point": point, "tabs": seen}}
