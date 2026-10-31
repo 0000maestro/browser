@@ -36,6 +36,8 @@ Treat these as current implementation constraints unless the task explicitly cha
 - routine automations are deterministic: `contract.toml` owns intent/order/checkpoints and `run.py` only reflects those steps;
 - an agent enters an automation only on explicit design/refinement work or after a checkpoint failure; normal successful runs do not load an agent;
 - local `.runs/` evidence is transient and gitignored; durable learned behavior belongs in the automation contract/module;
+- a run root is an index: checkpoint-owned evidence belongs under ordered `steps/<ordinal>-<id>/`; cross-step network evidence belongs under `traffic/`; do not flatten correlated artifacts back into the root;
+- the runtime owns step-local placement (`ctx["run_dir"]`, `artifact_path()`, screenshot normalization) so individual automations do not re-own that architecture;
 - when `--capture-traffic` is active, checkpoint traffic settling belongs to the shared runner, not individual automation sleeps; degraded traffic evidence is recorded without silently redefining functional success.
 
 ## Where truth lives

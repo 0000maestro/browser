@@ -21,12 +21,21 @@ Infrastructure shared by every automation stays under `_runtime/`; `_template/` 
 ./bin/browser-automation run <id> --input key=value
 ~~~
 
-When a run fails, the runtime writes a local, gitignored:
+Every run is a local, gitignored evidence index:
 
 ~~~text
-.runs/<id>/<run-id>/failure.json
+.runs/<id>/<run-id>/
+├── run.json
+├── result.json | failure.json
+├── steps/
+│   └── <ordinal>-<step-id>/
+│       ├── checkpoint.json
+│       └── <step evidence>
+└── traffic/                 # only when capture is enabled
 ~~~
 
-That file is the agent repair entrypoint. It points directly to the failed contract checkpoint and `step_<id>()`.
+During a step, `ctx["run_dir"]` points at that step's directory; `ctx["run_root"]` points at the whole run. Screenshots and `artifact_path()` outputs are step-local by construction.
+
+On failure, root `failure.json` points directly to the failed step directory, contract checkpoint and `step_<id>()`; the next mind should start there instead of scanning the full run.
 
 See [Browser automations](../docs/automations.md) for the operating model and [.agents/skills/browser-automation/SKILL.md](../.agents/skills/browser-automation/SKILL.md) for agent repair behavior.
