@@ -737,6 +737,7 @@ def execute_from_env(browser: dict[str, Any]) -> None:
         "completed_at": _now(),
         "completed_checkpoints": completed,
         "success_condition": contract["success"]["condition"],
+        "steps": str((run_dir / "steps").relative_to(run_dir)),
         "traffic": payload.get("traffic"),
         "traffic_checkpoints": payload.get("traffic_checkpoints"),
         "traffic_observability": {

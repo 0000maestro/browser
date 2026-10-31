@@ -507,6 +507,7 @@ def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bo
                 "run_id": run_id,
                 "type": "browser_use_process",
                 "checkpoint": state.get("current_step"),
+                "step_dir": state.get("current_step_dir"),
                 "contract": str(contract_path.relative_to(ROOT)),
                 "module": str(module_path.relative_to(ROOT)),
                 "stderr_tail": proc.stderr[-4000:],
