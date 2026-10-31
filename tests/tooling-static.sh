@@ -37,3 +37,5 @@ PY
 python3 automations/_runtime/cli.py run --help | grep -q -- '--capture-traffic'
 
 python3 tests/traffic-boundaries.py
+
+python3 tests/run-layout.py

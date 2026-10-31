@@ -311,10 +311,12 @@ def _utc_now() -> str:
 
 def _traffic_capture_start(run_dir: Path) -> tuple[subprocess.Popen[str], Any, Path, Path]:
     cdp_url = os.environ.get("BU_CDP_URL") or f"http://127.0.0.1:{os.environ.get('CDP_HOST_PORT', '9222')}"
-    traffic_path = run_dir / "traffic.jsonl"
-    state_path = run_dir / "traffic-state.json"
-    ready_path = run_dir / "traffic.ready"
-    log_path = run_dir / "traffic-capture.log"
+    traffic_dir = run_dir / "traffic"
+    traffic_dir.mkdir(parents=True, exist_ok=True)
+    traffic_path = traffic_dir / "events.jsonl"
+    state_path = traffic_dir / "state.json"
+    ready_path = traffic_dir / ".ready"
+    log_path = traffic_dir / "capture.log"
     log_handle = log_path.open("w", encoding="utf-8")
 
     process = subprocess.Popen(
@@ -387,6 +389,7 @@ def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bo
 
     manifest = {
         "schema": "uklok.browser.automation-run/v1",
+        "layout": "uklok.browser.automation-run-layout/v2",
         "automation": name,
         "run_id": run_id,
         "status": "running",
@@ -396,10 +399,11 @@ def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bo
         "module": str(module_path.relative_to(ROOT)),
         "module_sha256": _sha256(module_path),
         "from_step": from_step,
+        "steps": str((run_dir / "steps").relative_to(ROOT)),
         "capture_traffic": capture_traffic,
-        "traffic": str((run_dir / "traffic.jsonl").relative_to(ROOT)) if capture_traffic else None,
-        "traffic_state": str((run_dir / "traffic-state.json").relative_to(ROOT)) if capture_traffic else None,
-        "traffic_checkpoints": str((run_dir / "traffic-checkpoints.jsonl").relative_to(ROOT)) if capture_traffic else None,
+        "traffic": str((run_dir / "traffic" / "events.jsonl").relative_to(ROOT)) if capture_traffic else None,
+        "traffic_state": str((run_dir / "traffic" / "state.json").relative_to(ROOT)) if capture_traffic else None,
+        "traffic_checkpoints": str((run_dir / "traffic" / "checkpoints.jsonl").relative_to(ROOT)) if capture_traffic else None,
         "traffic_observability": {"requested": capture_traffic, "status": "pending" if capture_traffic else "disabled"},
         "inputs": recorded_inputs,
     }
@@ -415,9 +419,9 @@ def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bo
         "recorded_inputs": recorded_inputs,
         "from_step": from_step,
         "capture_traffic": capture_traffic,
-        "traffic": str((run_dir / "traffic.jsonl").relative_to(ROOT)) if capture_traffic else None,
-        "traffic_state": str(run_dir / "traffic-state.json") if capture_traffic else None,
-        "traffic_checkpoints": str(run_dir / "traffic-checkpoints.jsonl") if capture_traffic else None,
+        "traffic": str((run_dir / "traffic" / "events.jsonl").relative_to(ROOT)) if capture_traffic else None,
+        "traffic_state": str(run_dir / "traffic" / "state.json") if capture_traffic else None,
+        "traffic_checkpoints": str(run_dir / "traffic" / "checkpoints.jsonl") if capture_traffic else None,
     }
 
     env = os.environ.copy()
@@ -450,7 +454,7 @@ def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bo
                 else:
                     manifest["traffic_observability"] = {"requested": True, "status": "active"}
                     _json_dump(run_dir / "run.json", manifest)
-                    print(f"Capturing raw Network.* CDP events: {run_dir.relative_to(ROOT)}/traffic.jsonl")
+                    print(f"Capturing raw Network.* CDP events: {run_dir.relative_to(ROOT)}/traffic/events.jsonl")
 
             proc = subprocess.run(
                 [str(ROOT / "bin" / "browser-use")],

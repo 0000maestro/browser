@@ -36,7 +36,67 @@ def _append_event(path: Path, value: Any) -> None:
         handle.write(json.dumps(value, sort_keys=True, default=str) + "\n")
 
 
-def _browser_snapshot(browser: dict[str, Any], capture_screenshot: bool) -> dict[str, Any]:
+def _step_workspace(run_root: Path, ordinal: int, step_id: str) -> Path:
+    path = run_root / "steps" / f"{ordinal:02d}-{step_id}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _artifact_path(ctx: dict[str, Any], name: str | Path) -> Path:
+    raw = Path(name)
+    if raw.is_absolute():
+        raw = Path(raw.name)
+    if raw.name in {"", ".", ".."}:
+        raise ValueError(f"invalid step artifact path: {name!r}")
+
+    step_dir_value = ctx.get("step_dir")
+    if not step_dir_value:
+        raise RuntimeError("step artifact requested outside an active checkpoint")
+
+    step_dir = Path(step_dir_value).resolve()
+    target = (step_dir / raw).resolve()
+    if target != step_dir and step_dir not in target.parents:
+        raise ValueError(f"step artifact escaped checkpoint directory: {name!r}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+def _checkpoint_record(
+    *,
+    path: Path,
+    payload: dict[str, Any],
+    step: dict[str, Any],
+    ordinal: int,
+    status: str,
+    observed: Any = None,
+    evidence: Any = None,
+    error: str | None = None,
+    traffic_boundary: dict[str, Any] | None = None,
+) -> None:
+    _write_json(
+        path,
+        {
+            "schema": "uklok.browser.automation-checkpoint/v1",
+            "automation": payload["automation"],
+            "run_id": Path(payload["run_dir"]).name,
+            "ordinal": ordinal,
+            "step": step["id"],
+            "status": status,
+            "expected": step["checkpoint"],
+            "at": _now(),
+            "observed": _safe(observed),
+            "evidence": _safe(evidence),
+            "error": error,
+            "traffic_boundary": _safe(traffic_boundary),
+        },
+    )
+
+
+def _browser_snapshot(
+    browser: dict[str, Any],
+    capture_screenshot: bool,
+    step_dir: Path | None = None,
+) -> dict[str, Any]:
     snapshot: dict[str, Any] = {}
 
     current_tab = browser.get("current_tab")
@@ -57,7 +117,10 @@ def _browser_snapshot(browser: dict[str, Any], capture_screenshot: bool) -> dict
         screenshot = browser.get("capture_screenshot")
         if callable(screenshot):
             try:
-                snapshot["screenshot"] = str(screenshot(full=False))
+                target = step_dir / "failure.png" if step_dir is not None else None
+                snapshot["screenshot"] = str(
+                    screenshot(str(target), full=False) if target is not None else screenshot(full=False)
+                )
             except Exception as exc:
                 snapshot["screenshot_error"] = str(exc)
 
@@ -70,10 +133,25 @@ def _load_module(module_path: Path, browser: dict[str, Any], ctx: dict[str, Any]
         "__file__": str(module_path),
         "__name__": f"uklok_automation_{ctx['automation']}",
         "ctx": ctx,
+        "artifact_path": lambda name: str(_artifact_path(ctx, name)),
     }
     for name, value in browser.items():
         if not name.startswith("__"):
             namespace[name] = value
+
+    screenshot = browser.get("capture_screenshot")
+    if callable(screenshot):
+        def capture_step_screenshot(path: str | Path | None = None, *args: Any, **kwargs: Any) -> Any:
+            if path is None:
+                counter = int(ctx.get("_screenshot_counter", 0)) + 1
+                ctx["_screenshot_counter"] = counter
+                target = _artifact_path(ctx, f"screenshot-{counter:02d}.png")
+            else:
+                target = _artifact_path(ctx, path)
+            return screenshot(str(target), *args, **kwargs)
+
+        namespace["capture_screenshot"] = capture_step_screenshot
+
     source = module_path.read_text(encoding="utf-8")
     exec(compile(source, str(module_path), "exec"), namespace, namespace)
     return namespace
@@ -393,10 +471,15 @@ def _failure(
     error: str | None,
     browser: dict[str, Any],
     traffic_boundary: dict[str, Any] | None,
+    step_dir: Path,
 ) -> Path:
     run_dir = Path(payload["run_dir"])
     failure_policy = contract.get("failure", {})
-    browser_state = _browser_snapshot(browser, bool(failure_policy.get("capture_screenshot", True)))
+    browser_state = _browser_snapshot(
+        browser,
+        bool(failure_policy.get("capture_screenshot", True)),
+        step_dir,
+    )
     step_id = step["id"]
     resume = step["resume"]
 
@@ -418,7 +501,9 @@ def _failure(
         "contract": str(Path(payload["contract_path"]).relative_to(payload["root"])),
         "module": str(Path(payload["module_path"]).relative_to(payload["root"])),
         "function": f"step_{step_id}",
+        "step_dir": str(step_dir.relative_to(run_dir)),
         "inputs": payload["recorded_inputs"],
+        "steps": str((run_dir / "steps").relative_to(run_dir)),
         "traffic": payload.get("traffic"),
         "traffic_checkpoints": payload.get("traffic_checkpoints"),
         "traffic_checkpoint": _safe(traffic_boundary),
@@ -451,7 +536,9 @@ def execute_from_env(browser: dict[str, Any]) -> None:
     module_path = Path(payload["module_path"])
     run_dir = Path(payload["run_dir"])
     contract = tomllib.loads(contract_path.read_text(encoding="utf-8"))
-    steps: list[dict[str, Any]] = contract["algorithm"]
+    all_steps: list[dict[str, Any]] = contract["algorithm"]
+    step_ordinals = {step["id"]: index for index, step in enumerate(all_steps, start=1)}
+    steps = all_steps
 
     from_step = payload.get("from_step")
     if from_step:
@@ -461,7 +548,9 @@ def execute_from_env(browser: dict[str, Any]) -> None:
     ctx: dict[str, Any] = {
         "automation": payload["automation"],
         "inputs": payload["inputs"],
+        "run_root": str(run_dir),
         "run_dir": str(run_dir),
+        "step_dir": None,
         "contract": {
             "id": contract["id"],
             "version": contract["version"],
@@ -479,7 +568,20 @@ def execute_from_env(browser: dict[str, Any]) -> None:
 
     for step in steps:
         step_id = step["id"]
+        ordinal = step_ordinals[step_id]
+        step_dir = _step_workspace(run_dir, ordinal, step_id)
+        checkpoint_path = step_dir / "checkpoint.json"
         ctx["step"] = step
+        ctx["step_dir"] = str(step_dir)
+        ctx["run_dir"] = str(step_dir)
+        ctx["_screenshot_counter"] = 0
+        _checkpoint_record(
+            path=checkpoint_path,
+            payload=payload,
+            step=step,
+            ordinal=ordinal,
+            status="running",
+        )
         _write_json(
             run_dir / "state.json",
             {
@@ -487,6 +589,7 @@ def execute_from_env(browser: dict[str, Any]) -> None:
                 "run_id": run_dir.name,
                 "status": "running",
                 "current_step": step_id,
+                "current_step_dir": str(step_dir.relative_to(run_dir)),
                 "completed": completed,
                 "updated_at": _now(),
             },
@@ -498,6 +601,7 @@ def execute_from_env(browser: dict[str, Any]) -> None:
                 "step": step_id,
                 "at": _now(),
                 "checkpoint": step["checkpoint"],
+                "step_dir": str(step_dir.relative_to(run_dir)),
                 "traffic_from_seq": traffic_cursor["seq"] + 1 if payload.get("capture_traffic") else None,
             },
         )
@@ -524,6 +628,16 @@ def execute_from_env(browser: dict[str, Any]) -> None:
                 observed=None,
                 error=error,
                 browser=browser,
+                traffic_boundary=traffic_boundary,
+                step_dir=step_dir,
+            )
+            _checkpoint_record(
+                path=checkpoint_path,
+                payload=payload,
+                step=step,
+                ordinal=ordinal,
+                status="exception",
+                error=error,
                 traffic_boundary=traffic_boundary,
             )
             _append_event(
@@ -558,6 +672,16 @@ def execute_from_env(browser: dict[str, Any]) -> None:
                 error=None,
                 browser=browser,
                 traffic_boundary=traffic_boundary,
+                step_dir=step_dir,
+            )
+            _checkpoint_record(
+                path=checkpoint_path,
+                payload=payload,
+                step=step,
+                ordinal=ordinal,
+                status="failed",
+                observed=observed,
+                traffic_boundary=traffic_boundary,
             )
             _append_event(
                 events_path,
@@ -581,6 +705,16 @@ def execute_from_env(browser: dict[str, Any]) -> None:
         if traffic_boundary:
             traffic_boundaries.append(traffic_boundary)
 
+        _checkpoint_record(
+            path=checkpoint_path,
+            payload=payload,
+            step=step,
+            ordinal=ordinal,
+            status="passed",
+            observed=result.get("observed"),
+            evidence=result.get("evidence"),
+            traffic_boundary=traffic_boundary,
+        )
         completed.append(step_id)
         _append_event(
             events_path,
