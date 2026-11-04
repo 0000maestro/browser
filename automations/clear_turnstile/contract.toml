@@ -1,8 +1,8 @@
 schema = "uklok.browser.automation/v1"
 id = "clear_turnstile"
 version = 1
-status = "ready"
-intent = "On the single visible tab, click the Cloudflare Turnstile checkbox once and wait until that iframe is gone."
+status = "draft"
+intent = "When the single visible tab is showing a Cloudflare Turnstile interstitial, click its sole Turnstile checkbox once and wait until that iframe is gone."
 module = "run.py"
 
 [trigger]
@@ -11,11 +11,12 @@ description = "The single visible tab is stopped on a Cloudflare Turnstile inter
 [authority]
 allowed = [
   "Attach the one HTTP(S) page tab that is already visible.",
-  "Click the Turnstile checkbox on that tab once.",
+  "Click the sole Turnstile checkbox on that interstitial tab once.",
   "Wait for that tab to show the page behind the interstitial.",
 ]
 forbidden = [
   "Choose among several visible pages.",
+  "Choose among several matching Turnstile iframes.",
   "Open a new tab.",
   "Navigate, reload, or change the tab URL.",
   "Read, copy, or replay the Turnstile response token.",
@@ -60,13 +61,17 @@ ATTACH that one tab.
 A Turnstile iframe has a src containing challenges.cloudflare.com and turnstile.
 Page querySelector does not see that iframe. The pierced DOM does.
 The interstitial title is "Just a moment..." or a title that starts with "Challenge".
-An empty title is not an interstitial title.
-IF the Turnstile iframe node is already absent and the title is not an interstitial title, do nothing.
+An empty or unreadable title does not prove an interstitial.
+IF no Turnstile iframe exists and the title is not an interstitial title, do nothing.
+IF the title is not an interstitial title while a Turnstile iframe exists, STOP. Do not click an embedded widget on a normal page.
+COUNT matching Turnstile iframe nodes.
+IF that count is not exactly one, STOP. Do not choose an iframe.
 A Turnstile iframe node that has no box is still present. It is not success and it is not yet a click.
-WAIT until that iframe has a box. A missing box, including "Could not compute box model.", is not a click.
+WAIT until the sole iframe has a box while the title still proves the interstitial and exactly one matching iframe remains.
+A missing box, including "Could not compute box model.", is not a click.
 CLICK once, about 28px from the iframe's left edge and vertically centered.
-WAIT until the Turnstile iframe node is absent and the title is not an interstitial title.
-An empty title is success only after that iframe node is gone.
+WAIT until all Turnstile iframe nodes are absent and the title is not an interstitial title.
+An empty or unreadable title is success only after every matching iframe node is gone.
 DO NOT click a second time.
 DO NOT read the hidden cf-turnstile-response input.
 """
@@ -74,6 +79,7 @@ checkpoint = "The single visible tab has no Turnstile iframe node, and its title
 on_failure = "Stop on this tab. Do not click again, reload, or invent a token."
 resume = "safe"
 known_variants = [
+  "A Turnstile iframe embedded on a normal destination page is outside this behavior; without an interstitial title the step stops without clicking.",
   "The checkbox lives in a cross-origin iframe. A coordinate click on the iframe box reaches it.",
   "The iframe node can exist before it has a box. That node is still the interstitial.",
   "A second click while verification is still running puts the checkbox back, so this step never clicks twice.",

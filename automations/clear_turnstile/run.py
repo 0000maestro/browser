@@ -51,11 +51,11 @@ def _walk(node, found):
         _walk(content, found)
 
 
-def _turnstile_iframe():
+def _turnstile_iframes():
     document = cdp("DOM.getDocument", depth=-1, pierce=True)
     found = []
     _walk(document.get("root") or {}, found)
-    return found[0] if found else None
+    return found
 
 
 def _read(expression):
@@ -99,19 +99,21 @@ def _iframe_box(backend):
 
 def _iframe_state():
     try:
-        backend = _turnstile_iframe()
+        backends = _turnstile_iframes()
     except RuntimeError:
         return "unreadable"
-    if backend is None:
+    if not backends:
         return "absent"
-    if _iframe_box(backend) is None:
+    if len(backends) > 1:
+        return "ambiguous"
+    if _iframe_box(backends[0]) is None:
         return "present"
     return "boxed"
 
 
 def _cleared():
     try:
-        if _turnstile_iframe() is not None:
+        if _turnstile_iframes():
             return False
     except RuntimeError:
         return False
@@ -121,10 +123,7 @@ def _cleared():
     return not _interstitial_title(title)
 
 
-def _click_checkbox():
-    backend = _turnstile_iframe()
-    if backend is None:
-        return None
+def _click_checkbox(backend):
     point = _iframe_box(backend)
     if point is None:
         return None
@@ -162,10 +161,25 @@ def step_click_verify(ctx):
 
     point = None
     for _ in range(20):
-        point = _click_checkbox()
+        title = _title()
+        try:
+            backends = _turnstile_iframes()
+        except RuntimeError:
+            return {"ok": False, "observed": {**_page(), "clicked": False, "tabs": seen}}
+
+        if not backends:
+            if _cleared():
+                return {"ok": True, "observed": {**_page(), "clicked": False, "tabs": seen}}
+            return {"ok": False, "observed": {**_page(), "clicked": False, "tabs": seen}}
+
+        if len(backends) != 1 or not _interstitial_title(title):
+            return {"ok": False, "observed": {**_page(), "clicked": False, "tabs": seen}}
+
+        point = _click_checkbox(backends[0])
         if point is not None:
             break
         wait(0.5)
+
     if point is None:
         return {"ok": False, "observed": {**_page(), "clicked": False, "tabs": seen}}
 
