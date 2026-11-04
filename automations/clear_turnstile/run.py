@@ -38,7 +38,7 @@ def _attrs(node):
 def _walk(node, found):
     if node.get("nodeName") == "IFRAME":
         src = _attrs(node).get("src") or ""
-        if "challenges.cloudflare.com" in src and "turnstile" in src:
+        if src.startswith("https://challenges.cloudflare.com/") and "turnstile" in src.casefold():
             backend = node.get("backendNodeId")
             if backend:
                 found.append(backend)

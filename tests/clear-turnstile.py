@@ -16,9 +16,16 @@ SPEC.loader.exec_module(module)
 
 
 class Scenario:
-    def __init__(self, *, title: str | None, iframe_count: int):
+    def __init__(
+        self,
+        *,
+        title: str | None,
+        iframe_count: int,
+        iframe_src_prefix: str = "https://challenges.cloudflare.com/turnstile/v0/api.js?widget=",
+    ):
         self.title = title
         self.iframe_count = iframe_count
+        self.iframe_src_prefix = iframe_src_prefix
         self.clicks = 0
         self.url = "https://example.test/"
         self.tab = {"url": self.url, "targetId": "page-1"}
@@ -49,7 +56,7 @@ class Scenario:
                         "backendNodeId": 100 + index,
                         "attributes": [
                             "src",
-                            f"https://challenges.cloudflare.com/turnstile/v0/api.js?widget={index}",
+                            f"{self.iframe_src_prefix}{index}",
                         ],
                     }
                 )
@@ -86,6 +93,16 @@ result = execute(embedded)
 assert result["ok"] is False
 assert result["observed"]["clicked"] is False
 assert embedded.clicks == 0
+
+lookalike = Scenario(
+    title="Just a moment...",
+    iframe_count=1,
+    iframe_src_prefix="https://example.test/challenges.cloudflare.com/turnstile?widget=",
+)
+result = execute(lookalike)
+assert result["ok"] is False
+assert result["observed"]["clicked"] is False
+assert lookalike.clicks == 0
 
 ambiguous = Scenario(title="Just a moment...", iframe_count=2)
 result = execute(ambiguous)

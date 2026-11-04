@@ -58,7 +58,7 @@ pseudocode = """
 COUNT the visible HTTP(S) pages again. Do not trust the tab attached by an earlier step.
 IF that count is not exactly one, STOP. Do not click.
 ATTACH that one tab.
-A Turnstile iframe has a src containing challenges.cloudflare.com and turnstile.
+A Turnstile iframe has an https://challenges.cloudflare.com/ src that identifies turnstile.
 Page querySelector does not see that iframe. The pierced DOM does.
 The interstitial title is "Just a moment..." or a title that starts with "Challenge".
 An empty or unreadable title does not prove an interstitial.
