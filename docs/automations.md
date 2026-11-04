@@ -148,7 +148,15 @@ The runner validates that contract step IDs and Python `step_<id>()` functions m
 
 Validation checks contract shape, module syntax and exact step/function alignment.
 
-A `draft` contract can validate, but only `status = "ready"` automations may run.
+A `draft` contract can validate. Normal execution accepts only `status = "ready"`.
+
+Before promoting a newly authored automation, perform its real-browser proof explicitly while it is still draft:
+
+~~~bash
+./bin/browser-automation run <id> --allow-draft
+~~~
+
+`--allow-draft` is an authoring/proof escape hatch, not a scheduler mode. The run records `contract_status = "draft"` and `proof_mode = true` in `run.json`, so later readers cannot confuse proof evidence with a promoted automation. After the observed success condition is proven, set `status = "ready"`, validate again, and use ordinary `run`.
 
 ## Run
 

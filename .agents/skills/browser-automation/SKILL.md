@@ -108,7 +108,11 @@ Then work contract-first:
 7. mark `resume = "safe"` only when the step can really be re-entered from existing browser state;
 8. set `[success].condition`;
 9. implement one synchronous `step_<id>(ctx)` for every contract step;
-10. set `status = "ready"` only after validation and a real browser proof.
+10. validate while the contract is still `draft`;
+11. prove it against the real browser explicitly with `./bin/browser-automation run <id> --allow-draft`;
+12. inspect the observed success evidence, then set `status = "ready"` and validate again.
+
+Do not mark an unproven automation `ready` merely to make it executable. `--allow-draft` is the bounded authoring/proof path; normal execution still rejects drafts.
 
 Use the Browser Use skill for interaction mechanics instead of copying those mechanics into every automation contract.
 
