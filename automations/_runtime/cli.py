@@ -367,11 +367,26 @@ def _traffic_capture_stop(process: subprocess.Popen[str], log_handle: Any) -> bo
     return stopped_early
 
 
-def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bool) -> int:
+def _run(
+    name: str,
+    pairs: list[str],
+    from_step: str | None,
+    capture_traffic: bool,
+    allow_draft: bool,
+) -> int:
     summary = validate(name)
     contract_path, contract = _load_contract(name)
-    if contract.get("status") != "ready":
-        raise ContractError(f"{name} is {contract.get('status')!r}; only ready automations can run")
+    status = contract.get("status")
+    if status == "draft":
+        if not allow_draft:
+            raise ContractError(
+                f"{name} is 'draft'; use --allow-draft only for an explicit authoring/proof run"
+            )
+    elif status == "ready":
+        if allow_draft:
+            raise ContractError(f"{name} is already 'ready'; remove --allow-draft")
+    else:
+        raise ContractError(f"{name} has unsupported status {status!r}")
 
     module_path = _module_path(contract_path, contract)
     inputs, recorded_inputs = _resolve_inputs(contract, pairs)
@@ -393,6 +408,8 @@ def _run(name: str, pairs: list[str], from_step: str | None, capture_traffic: bo
         "automation": name,
         "run_id": run_id,
         "status": "running",
+        "contract_status": status,
+        "proof_mode": status == "draft",
         "started_at": _utc_now(),
         "contract": str(contract_path.relative_to(ROOT)),
         "contract_sha256": _sha256(contract_path),
@@ -542,9 +559,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--input", action="append", default=[], metavar="KEY=VALUE")
     run_parser.add_argument("--from", dest="from_step", metavar="CHECKPOINT")
     run_parser.add_argument(
+        "--allow-draft",
+        action="store_true",
+        help="Run a draft explicitly for authoring/proof; recorded as proof_mode in run.json",
+    )
+    run_parser.add_argument(
         "--capture-traffic",
         action="store_true",
-        help="Record raw Chrome Network.* CDP events to this run's traffic.jsonl",
+        help="Record raw Chrome Network.* CDP events under this run's traffic/ directory",
     )
 
     return parser
@@ -560,7 +582,13 @@ def main() -> int:
         if args.command == "new":
             return new_automation(args.name)
         if args.command == "run":
-            return _run(args.name, args.input, args.from_step, args.capture_traffic)
+            return _run(
+                args.name,
+                args.input,
+                args.from_step,
+                args.capture_traffic,
+                args.allow_draft,
+            )
     except ContractError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

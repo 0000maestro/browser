@@ -35,6 +35,7 @@ print('tooling static validation passed')
 PY
 
 python3 automations/_runtime/cli.py run --help | grep -q -- '--capture-traffic'
+python3 automations/_runtime/cli.py run --help | grep -q -- '--allow-draft'
 
 python3 tests/traffic-boundaries.py
 
