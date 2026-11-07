@@ -40,3 +40,5 @@ python3 automations/_runtime/cli.py run --help | grep -q -- '--allow-draft'
 python3 tests/traffic-boundaries.py
 
 python3 tests/run-layout.py
+
+python3 tests/clear-turnstile.py
