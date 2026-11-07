@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${root}/.venv"
+venv_python="${venv}/bin/python"
+requirements="${root}/requirements-browser-use.txt"
+skill_dir="${root}/.agents/skills/browser-use"
+legacy_literal_venv="${root}/"'${venv}'
+
+if ! command -v uv >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+ERROR: uv is required.
+
+macOS with Homebrew:
+  brew install uv
+
+Other platforms:
+  https://docs.astral.sh/uv/getting-started/installation/
+EOF
+  exit 1
+fi
+
+# Clean up the exact accidental directory created by the broken 46104397 setup.
+if [[ -d "${legacy_literal_venv}" && -f "${legacy_literal_venv}/pyvenv.cfg" ]]; then
+  echo "Removing legacy literal virtualenv created by the previous setup bug: ${legacy_literal_venv}"
+  rm -rf -- "${legacy_literal_venv}"
+fi
+
+if [[ ! -x "${venv_python}" ]]; then
+  echo "Creating repo-local Python 3.12 environment at .venv ..."
+  uv venv --python 3.12 "${venv}"
+fi
+
+echo "Installing pinned Browser Use capability into .venv ..."
+uv pip install --python "${venv_python}" --requirements "${requirements}"
+
+echo "Verifying pinned Browser Use CLI ..."
+"${root}/bin/browser-use" --version
+
+echo "Materializing the upstream Browser Use skill from the same .venv ..."
+"${root}/bin/browser-use" skill install \
+  --no-install \
+  --path "${skill_dir}"
+
+echo "Validating tracked automation contracts ..."
+"${root}/bin/browser-automation" validate
+
+echo
+echo "Browser Use Phase A setup complete."
+echo "  environment: ${venv}"
+echo "  skill:       ${skill_dir}/SKILL.md"
+echo "  CDP default: http://127.0.0.1:${CDP_HOST_PORT:-9222}"
+echo
+echo "Next:"
+echo "  ${root}/bin/browser-use-doctor"

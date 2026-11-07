@@ -14,6 +14,8 @@ One **headful Google Chrome** session that a human and an agent can share.
 | I want to… | Go here |
 | --- | --- |
 | Run it locally | [Quick start](docs/quickstart.md) |
+| Control it with an agent | [Browser Use — Phase A](docs/browser-use.md) |
+| Build deterministic browser automations | [Browser automations](docs/automations.md) |
 | Understand the moving parts | [Architecture](docs/architecture.md) |
 | Keep logins across restarts | [Profiles & identity](docs/profiles.md) |
 | Debug a black screen / unhealthy browser | [Operations](docs/operations.md) |
@@ -70,6 +72,19 @@ A healthy session means all of these are true:
 5. The Chrome profile is writable and survives restart.
 
 `tests/smoke.sh` encodes that contract.
+
+## Agent control with Browser Use
+
+Once Chrome is healthy, add the pinned Browser Use capability layer:
+
+```bash
+./bin/browser-use-setup
+./bin/browser-use-doctor
+```
+
+The adapter attaches Browser Use to this same Chrome over CDP; it does not create another browser runtime. See [Browser Use — Phase A](docs/browser-use.md).
+
+For repeated work, move learned behavior out of the agent happy path and into [contract-first browser automations](docs/automations.md). Agents return only when a checkpoint fails or behavior changes.
 
 ## Governance
 

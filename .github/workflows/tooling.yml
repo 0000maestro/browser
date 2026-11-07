@@ -1,0 +1,24 @@
+name: Tooling
+
+on:
+  pull_request:
+    paths:
+      - "bin/**"
+      - "automations/**"
+      - "requirements-browser-use.txt"
+      - "tests/**"
+      - ".github/workflows/tooling.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate adapters and automation sources
+        run: ./tests/tooling-static.sh

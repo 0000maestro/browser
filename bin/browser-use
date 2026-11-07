@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+venv="${root}/.venv"
+cli="${venv}/bin/browser-use"
+
+if [[ ! -x "${cli}" ]]; then
+  echo "ERROR: repo-local Browser Use environment is not ready." >&2
+  echo "Run: ${root}/bin/browser-use-setup" >&2
+  exit 1
+fi
+
+export PATH="${venv}/bin:${PATH}"
+export BU_CDP_URL="${BU_CDP_URL:-http://127.0.0.1:${CDP_HOST_PORT:-9222}}"
+export BH_TAB_MARKER="${BH_TAB_MARKER:-0}"
+
+exec "${cli}" "$@"

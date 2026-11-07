@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export BU_CDP_URL="${BU_CDP_URL:-http://127.0.0.1:${CDP_HOST_PORT:-9222}}"
+skill="${root}/.agents/skills/browser-use/SKILL.md"
+version_url="${BU_CDP_URL%/}/json/version"
+
+echo "Browser Use Phase A doctor"
+echo "  CDP: ${BU_CDP_URL}"
+
+if [[ ! -f "${skill}" ]]; then
+  echo "ERROR: Browser Use skill is not installed at ${skill}" >&2
+  echo "Run: ${root}/bin/browser-use-setup" >&2
+  exit 1
+fi
+
+echo -n "1/4 CLI version: "
+"${root}/bin/browser-use" --version
+
+echo -n "2/4 Upstream skill: "
+if "${root}/bin/browser-use" skill show >/dev/null; then
+  echo "ok"
+else
+  echo "failed" >&2
+  exit 1
+fi
+
+echo -n "3/4 UKLOK Chrome CDP: "
+cdp_json="$(curl --fail --silent --show-error --max-time 3 "${version_url}")" || {
+  echo "failed" >&2
+  echo "Start the browser first:" >&2
+  echo "  docker compose -f compose.yaml -f local.yaml up -d" >&2
+  exit 1
+}
+if ! grep -q '"Browser"' <<<"${cdp_json}"; then
+  echo "unexpected response" >&2
+  echo "${cdp_json}" >&2
+  exit 1
+fi
+echo "ok"
+
+echo -n "4/4 Browser Use -> existing CDP session: "
+result="$(
+  printf '%s\n' 'tabs = list_tabs(); print(f"attached tabs={len(tabs)}")'     | "${root}/bin/browser-use"
+)" || {
+  echo "failed" >&2
+  exit 1
+}
+if ! grep -q 'attached tabs=' <<<"${result}"; then
+  echo "unexpected output" >&2
+  echo "${result}" >&2
+  exit 1
+fi
+echo "${result}"
+
+echo
+echo "READY: Browser Use is controlling the existing UKLOK Chrome session."

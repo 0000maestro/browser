@@ -1,0 +1,62 @@
+schema = "uklok.browser.automation/v1"
+id = "example_read_page"
+version = 1
+status = "ready"
+intent = "Open a public page and verify that its title can be read through Browser Use."
+module = "run.py"
+
+[trigger]
+description = "Manual smoke check for the contract-first automation layer."
+
+[authority]
+allowed = [
+  "Open the supplied public URL in a browser tab.",
+  "Read the page URL and title.",
+]
+forbidden = [
+  "Submit forms.",
+  "Download files.",
+  "Change authenticated account state.",
+]
+
+[[inputs]]
+name = "url"
+type = "url"
+required = false
+sensitive = false
+default = "https://example.com"
+description = "Public page used by the smoke automation."
+
+[[preconditions]]
+id = "browser_ready"
+condition = "UKLOK Browser is healthy and Browser Use can attach through BU_CDP_URL."
+
+[[algorithm]]
+id = "open_page"
+pseudocode = """
+OPEN input.url in a new tab.
+WAIT until page loading settles.
+READ the current URL.
+"""
+checkpoint = "The active Browser Use tab has a URL whose origin matches input.url."
+on_failure = "Stop; later reads would describe the wrong page."
+resume = "safe"
+known_variants = []
+
+[[algorithm]]
+id = "read_title"
+pseudocode = """
+READ document.title from the current page.
+DO NOT mutate page or account state.
+"""
+checkpoint = "The page exposes a non-empty document title."
+on_failure = "Stop and inspect whether page structure/loading behavior changed."
+resume = "safe"
+known_variants = []
+
+[success]
+condition = "Both open_page and read_title checkpoints passed."
+
+[failure]
+capture_screenshot = true
+agent_skill = ".agents/skills/browser-automation/SKILL.md"

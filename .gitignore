@@ -1,1 +1,4 @@
 .env
+.venv/
+.runs/
+.agents/skills/browser-use/

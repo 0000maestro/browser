@@ -1,0 +1,48 @@
+schema = "uklok.browser.automation/v1"
+id = "replace_me"
+version = 1
+status = "draft"
+intent = "State one observable job this automation performs on the human's behalf."
+module = "run.py"
+
+[trigger]
+description = "Describe when an external scheduler or caller should run this automation."
+
+[authority]
+allowed = [
+  "List only the browser actions this automation is pre-authorized to perform.",
+]
+forbidden = [
+  "List actions that must never happen silently.",
+]
+
+[[inputs]]
+name = "target_url"
+type = "url"
+required = false
+sensitive = false
+default = "https://example.com"
+description = "Replace or remove this example input."
+
+[[preconditions]]
+id = "browser_ready"
+condition = "The UKLOK browser is healthy and the required human-owned session already exists."
+
+[[algorithm]]
+id = "define_goal"
+pseudocode = """
+DESCRIBE the smallest deterministic browser behavior.
+PREFER stable page state, DOM/AX evidence, or direct CDP over visual guessing.
+STOP when the expected checkpoint cannot be established.
+"""
+checkpoint = "Describe the observable state that proves this step completed."
+on_failure = "Stop before later actions and hand the failed checkpoint to repair."
+resume = "restart"
+known_variants = []
+
+[success]
+condition = "Describe the final observable state that makes the automation successful."
+
+[failure]
+capture_screenshot = true
+agent_skill = ".agents/skills/browser-automation/SKILL.md"

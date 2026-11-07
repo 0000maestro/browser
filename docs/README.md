@@ -5,6 +5,8 @@ Start with the task you are trying to complete. You should not need to read thes
 | Need | Document | What it answers |
 | --- | --- | --- |
 | Start | [Quick start](quickstart.md) | Which Compose files do I run? |
+| Agent control | [Browser Use — Phase A](browser-use.md) | How does an agent operate the existing Chrome with minimal setup? |
+| Automate | [Browser automations](automations.md) | How do learned browser behaviors become deterministic, checkpointed automations? |
 | Mental model | [Architecture](architecture.md) | Which process owns which surface? |
 | Browser identity | [Profiles & identity](profiles.md) | Where do cookies/logins live and what can be reused? |
 | Diagnose | [Operations](operations.md) | What do I inspect when Chrome/noVNC/CDP fails? |
@@ -38,3 +40,8 @@ Combine only the behavior you need.
 | Package publication | `.github/workflows/publish.yml` |
 | Agent entrypoint | `AGENTS.md` |
 | Repo-specific runtime skill | `.agents/skills/browser-runtime/SKILL.md` |
+| Browser Use dependency pin | `requirements-browser-use.txt` |
+| Browser Use adapter/setup/doctor | `bin/browser-use*` |
+| Automation contracts/modules/runtime | `automations/` + `bin/browser-automation` |
+| Automation repair skill | `.agents/skills/browser-automation/SKILL.md` |
+| Generated upstream operation skill | `.agents/skills/browser-use/SKILL.md` (local, gitignored) |

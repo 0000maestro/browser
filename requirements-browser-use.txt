@@ -1,0 +1,3 @@
+# Phase A capability-layer dependency.
+# Keep Browser Use as the owner of its transitive browser-harness dependency.
+browser-use==0.13.14
