@@ -12,11 +12,12 @@ from urllib.parse import parse_qsl, urlsplit
 API_TYPES = {"XHR", "Fetch", "EventSource"}
 ASSET_TYPES = {"Stylesheet", "Image", "Media", "Font", "Script"}
 JSON_MARKERS = ("application/json", "+json", "application/graphql-response+json")
-SENSITIVE = re.compile(r"(authorization|auth|api.?key|access.?key|token|secret|client.?secret|password|passwd|session|cookie|credential|csrf|xsrf|signature|signed|hmac)", re.I)
+SENSITIVE = re.compile(r"(authorization|authentication|api.?key|access.?key|token|secret|client.?secret|password|passwd|session|cookie|credential|csrf|xsrf|signature|hmac)", re.I)
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27,}$", re.I)
 MIXED_ID = re.compile(r"^[A-Za-z0-9_-]{12,}$")
 GQL_NAME = re.compile(r"\b(?:query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]*)")
-GQL_SECRET_ARG = re.compile(r"""([_A-Za-z][_0-9A-Za-z]*(?:token|secret|password|passwd|api_?key|access_?key|client_?secret|session|credential|csrf|xsrf|signature|signed|hmac)[_0-9A-Za-z]*)\s*:\s*("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[-+]?\d+(?:\.\d+)?|true|false|null)""", re.I)
+GQL_IDENTITY_LITERAL = re.compile(r'("(?:\\.|[^"])*"|\b[-+]?\d+(?:\.\d+)?\b)')
+GQL_SECRET_ARG = re.compile(r"""([_A-Za-z][_0-9A-Za-z]*(?:token|secret|password|passwd|api_?key|access_?key|client_?secret|session|credential|csrf|xsrf|signature|hmac)[_0-9A-Za-z]*)\s*:\s*("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[-+]?\d+(?:\.\d+)?|true|false|null)""", re.I)
 
 
 class OperationReadError(RuntimeError):
@@ -174,7 +175,7 @@ def _assemble(run: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             continue
         for boundary in boundaries:
             if boundary["from_seq"] <= opening <= boundary["through_seq"]:
-                if boundary["target_id"] and call["opening_target_id"] and boundary["target_id"] != call["opening_target_id"]:
+                if boundary["target_id"] and boundary["target_id"] != call["opening_target_id"]:
                     continue
                 call["owner"] = boundary["step"]
                 break
@@ -238,7 +239,8 @@ def _gql(call: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
         if match:
             return match.group(1), payload
         if "{" in query:
-            normalized = " ".join(query.split())
+            structural = GQL_IDENTITY_LITERAL.sub("<value>", query)
+            normalized = " ".join(structural.split())
             return "anonymous-" + hashlib.sha256(normalized.encode()).hexdigest()[:12], payload
     return None, None
 
@@ -312,7 +314,9 @@ class Secrets:
 
 
 def _sensitive(name: str) -> bool:
-    return bool(SENSITIVE.search(name))
+    camel_spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    tokens = {part for part in re.split(r"[^a-z0-9]+", camel_spaced.lower()) if part}
+    return bool({"auth", "sig"} & tokens) or bool(SENSITIVE.search(name))
 
 
 def _cookies(value: str) -> list[tuple[str, str]]:
@@ -828,7 +832,6 @@ def derive_operations(run: Path, step: str | None = None) -> dict[str, Any]:
         keys = sorted(_group(step_calls))
         _write(run, str(base / "endpoints.json"), {"schema": "uklok.browser.operation-reading/v1", "step": step_id, "operations": _endpoint_records(step_calls, deps, steps_by_key)})
         step_dependencies = _dependency_names(step_calls, deps)
-        step_dependency_keys = {(item["kind"], item["name"]) for item in step_dependencies}
         _write(
             run,
             str(base / "auth.json"),
@@ -836,11 +839,6 @@ def derive_operations(run: Path, step: str | None = None) -> dict[str, Any]:
                 "schema": "uklok.browser.operation-auth/v1",
                 "step": step_id,
                 "dependencies": step_dependencies,
-                "coarse_rules": [
-                    rule
-                    for rule in credential_rules
-                    if (rule["kind"], rule["name"]) in step_dependency_keys
-                ],
             },
         )
         _write(run, str(base / "goal.json"), {

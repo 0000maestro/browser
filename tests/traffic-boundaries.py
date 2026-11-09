@@ -127,6 +127,7 @@ body_pending = execute._classify_traffic_state(
     carryover_keys={"page:body"},
 )
 assert [item["request_id"] for item in body_pending["blocking"]] == ["body"]
+assert body_pending["blocking"][0]["phase"] == "body_pending"
 assert body_pending["stale"] == []
 assert body_pending["carryover"] == []
 

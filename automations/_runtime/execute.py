@@ -189,6 +189,7 @@ def _traffic_item(value: dict[str, Any], now_epoch: float) -> dict[str, Any]:
         "method": value.get("method"),
         "url": value.get("url"),
         "response_status": value.get("response_status"),
+        "phase": value.get("phase"),
     }
     if age_seconds is not None:
         item["age_ms"] = round(age_seconds * 1000)

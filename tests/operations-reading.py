@@ -87,7 +87,7 @@ def fixture(run: Path) -> None:
                 "type": "XHR",
                 "request": {
                     "method": "GET",
-                    "url": f"https://api.example.test/users/123456?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
+                    "url": f"https://api.example.test/users/123456?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}&assigned_to=alice",
                     "headers": {
                         "Authorization": f"Bearer {AUTH_SECRET}",
                         "Cookie": f"session={COOKIE_SECRET}",
@@ -103,7 +103,7 @@ def fixture(run: Path) -> None:
                 "type": "XHR",
                 "request": {
                     "method": "GET",
-                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
+                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}&assigned_to=alice",
                     "headers": {
                         "Authorization": f"Bearer {AUTH_SECRET}",
                         "Cookie": f"session={COOKIE_SECRET}",
@@ -119,7 +119,7 @@ def fixture(run: Path) -> None:
             {
                 "type": "XHR",
                 "response": {
-                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
+                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}&assigned_to=alice",
                     "status": 200,
                     "mimeType": "application/json",
                     "headers": {"Set-Cookie": f"refresh={SERVER_COOKIE_SECRET}; Path=/; HttpOnly"},
@@ -143,7 +143,7 @@ def fixture(run: Path) -> None:
                 "type": "XHR",
                 "request": {
                     "method": "GET",
-                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
+                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}&assigned_to=alice",
                     "headers": {
                         "Authorization": f"Bearer {AUTH_SECRET}",
                         "Cookie": f"session={COOKIE_SECRET}",
@@ -159,7 +159,7 @@ def fixture(run: Path) -> None:
             {
                 "type": "XHR",
                 "response": {
-                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
+                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}&assigned_to=alice",
                     "status": 200,
                     "mimeType": "application/json",
                     "headers": {},
@@ -320,6 +320,22 @@ def fixture(run: Path) -> None:
                 },
             },
         ),
+        {
+            **raw(
+                22,
+                "Network.requestWillBeSent",
+                "human",
+                {
+                    "type": "XHR",
+                    "request": {
+                        "method": "GET",
+                        "url": "https://api.example.test/human",
+                        "headers": {},
+                    },
+                },
+            ),
+            "target": {"targetId": "human-page", "type": "page"},
+        },
     ]
     write_jsonl(run / "traffic" / "events.jsonl", events)
     write_jsonl(
@@ -327,7 +343,7 @@ def fixture(run: Path) -> None:
         [
             {"step": "step_a", "from_seq": 1, "through_seq": 4, "target_id": "page-1"},
             {"step": "step_b", "from_seq": 5, "through_seq": 13, "target_id": "page-1"},
-            {"step": "step_c", "from_seq": 14, "through_seq": 21, "target_id": "page-1"},
+            {"step": "step_c", "from_seq": 14, "through_seq": 22, "target_id": "page-1"},
         ],
     )
 
@@ -483,6 +499,10 @@ try:
     assert gql_b[0]["key"] != gql_c[0]["key"]
     observed_model = read(run / "steps" / "02-step_b" / "operations" / "graphql" / "observed-schema.json")
     assert observed_model["complete"] is False and observed_model["authority"] == "observed-only"
+    anon_a = {"post_data": json.dumps({"query": '{ thing(id: "123") { id } }'})}
+    anon_b = {"post_data": json.dumps({"query": '{ thing(id: "999") { id } }'})}
+    assert operations._gql(anon_a)[0] == operations._gql(anon_b)[0]
+    assert operations._gql(anon_a)[0].startswith("anonymous-")
 
     # 5. Schemas come only from observed bodies; missing body evidence stays unobserved.
     openapi_c = read(run / "steps" / "03-step_c" / "operations" / "openapi" / "api.example.test.json")
@@ -511,8 +531,10 @@ try:
         and rule["context"] == user_a["key"]
         and rule["kind"] == "header"
         and rule["name"] == "Authorization"
-        for rule in auth_a["coarse_rules"]
+        for rule in index["credential_rules"]
     )
+    assert all(item["name"] != "assigned_to" for item in auth_a)
+    assert "alice" not in secrets_text
     for secret in (
         AUTH_SECRET,
         COOKIE_SECRET,
@@ -547,17 +569,17 @@ try:
 
     # 9. A response without its opening event remains explicitly unattributed.
     index = read(run / "operations" / "index.json")
-    assert index["unattributed_count"] == 1
-    assert index["unattributed"][0]["request_id"] == "orphan"
+    assert index["unattributed_count"] == 2
+    assert {item["request_id"] for item in index["unattributed"]} == {"orphan", "human"}
 
     # 10. Assembled calls and grouped counts reconcile exactly.
-    assert index["total_observed_calls"] == 6
+    assert index["total_observed_calls"] == 7
     assert index["integrity"] == {
-        "assembled_api_calls": 6,
-        "grouped_call_count": 6,
+        "assembled_api_calls": 7,
+        "grouped_call_count": 7,
         "reconciles": True,
     }
-    assert sum(index["operation_counts"].values()) == 6
+    assert sum(index["operation_counts"].values()) == 7
 
     # 11. Re-reading deterministically replaces the same derived surface.
     first = derived_bytes(run)
