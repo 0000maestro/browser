@@ -213,6 +213,9 @@ def _classify_traffic_state(
         if target_id and request.get("target_id") != target_id:
             continue
         item = _traffic_item(request, now_epoch)
+        if request.get("phase") == "body_pending":
+            blocking.append(item)
+            continue
         if request.get("type") in PERSISTENT_RESOURCE_TYPES:
             persistent.append(item)
             continue
