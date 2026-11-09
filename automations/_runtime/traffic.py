@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import datetime as dt
 import json
 import os
@@ -14,6 +15,9 @@ import aiohttp
 
 
 STATE_SCHEMA = "uklok.browser.traffic-state/v1"
+BODY_MAX_BYTES = 1024 * 1024
+BODY_RESOURCE_TYPES = {"XHR", "Fetch", "EventSource"}
+BODY_MIME_MARKERS = ("application/json", "+json", "application/graphql-response+json", "text/event-stream")
 
 
 def _now() -> str:
@@ -155,6 +159,87 @@ class CDPTrafficRecorder:
         finally:
             self.attaching.discard(target_id)
 
+    @staticmethod
+    def _body_candidate(active: dict[str, Any]) -> bool:
+        resource_type = str(active.get("type") or "")
+        mime_type = str(active.get("mime_type") or "").lower()
+        return resource_type in BODY_RESOURCE_TYPES or any(marker in mime_type for marker in BODY_MIME_MARKERS)
+
+    def emit_capture(self, fact: dict[str, Any], session_id: str | None = None) -> None:
+        self.sequence += 1
+        envelope = {
+            "seq": self.sequence,
+            "captured_at": _now(),
+            "target": self.session_to_target.get(session_id),
+            "capture": fact,
+        }
+        self.handle.write(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False) + "\n")
+        self._write_state()
+
+    async def capture_response_body(
+        self,
+        *,
+        key: str,
+        session_id: str | None,
+        request_id: str | None,
+        encoded_data_length: Any,
+    ) -> None:
+        active = dict(self.active_requests.get(key) or {})
+        fact: dict[str, Any] = {
+            "kind": "response_body",
+            "session_id": session_id,
+            "target_id": active.get("target_id"),
+            "request_id": request_id,
+            "url": active.get("url"),
+            "method": active.get("method"),
+            "type": active.get("type"),
+            "status": "unavailable",
+        }
+        try:
+            encoded_size = int(encoded_data_length) if isinstance(encoded_data_length, (int, float)) else None
+            if encoded_size is not None:
+                fact["encoded_data_length"] = encoded_size
+            if encoded_size is not None and encoded_size > BODY_MAX_BYTES:
+                fact["status"] = "oversized"
+                fact["reason"] = "encoded_body_exceeds_limit"
+            elif not session_id or not request_id:
+                fact["reason"] = "request_identity_unavailable"
+            else:
+                try:
+                    result = await self.send(
+                        "Network.getResponseBody",
+                        {"requestId": request_id},
+                        session_id=session_id,
+                    )
+                except Exception:
+                    fact["reason"] = "get_response_body_failed"
+                else:
+                    body = result.get("body")
+                    base64_encoded = bool(result.get("base64Encoded"))
+                    if not isinstance(body, str):
+                        fact["reason"] = "response_body_missing"
+                    else:
+                        if base64_encoded:
+                            try:
+                                byte_length = len(base64.b64decode(body, validate=False))
+                            except Exception:
+                                byte_length = len(body.encode("utf-8"))
+                        else:
+                            byte_length = len(body.encode("utf-8"))
+                        fact["byte_length"] = byte_length
+                        if byte_length > BODY_MAX_BYTES:
+                            fact["status"] = "oversized"
+                            fact["reason"] = "decoded_body_exceeds_limit"
+                        else:
+                            fact["status"] = "captured"
+                            fact["body"] = body
+                            fact["base64_encoded"] = base64_encoded
+        finally:
+            self.emit_capture(fact, session_id=session_id)
+            live = self.active_requests.pop(key, None) or active
+            self._bump_lifecycle(live.get("target_id"))
+            self._write_state()
+
     def _observe_network_state(self, raw: dict[str, Any]) -> None:
         method = raw.get("method", "")
         params = raw.get("params") or {}
@@ -180,24 +265,41 @@ class CDPTrafficRecorder:
                 "type": params.get("type") or "Other",
                 "started_at": now,
                 "response_status": None,
+                "mime_type": None,
+                "phase": "request",
             }
             return
 
         if method == "Network.responseReceived":
             active = self.active_requests.get(key)
             if active is not None:
-                status = (params.get("response") or {}).get("status")
+                response = params.get("response") or {}
+                status = response.get("status")
                 active["response_status"] = status
+                active["mime_type"] = response.get("mimeType")
+                active["phase"] = "response"
                 if isinstance(status, (int, float)) and status >= 400 and not active.get("http_error_counted"):
                     active["http_error_counted"] = True
                     self._increment_counter("http_error", active.get("target_id"))
             return
 
         if method == "Network.loadingFinished":
-            active = self.active_requests.pop(key, None) or {}
+            active = self.active_requests.get(key) or {}
             active_target = active.get("target_id") or target_id
             self._increment_counter("finished", active_target)
             self._bump_lifecycle(active_target)
+            if active and self._body_candidate(active):
+                active["phase"] = "body_pending"
+                self._spawn(
+                    self.capture_response_body(
+                        key=key,
+                        session_id=session_id,
+                        request_id=request_id,
+                        encoded_data_length=params.get("encodedDataLength"),
+                    )
+                )
+            else:
+                self.active_requests.pop(key, None)
             return
 
         if method == "Network.loadingFailed":
@@ -205,6 +307,21 @@ class CDPTrafficRecorder:
             active_target = active.get("target_id") or target_id
             self._increment_counter("failed", active_target)
             self._bump_lifecycle(active_target)
+            if active and self._body_candidate(active):
+                self.emit_capture(
+                    {
+                        "kind": "response_body",
+                        "session_id": session_id,
+                        "target_id": active_target,
+                        "request_id": request_id,
+                        "url": active.get("url"),
+                        "method": active.get("method"),
+                        "type": active.get("type"),
+                        "status": "unavailable",
+                        "reason": "loading_failed",
+                    },
+                    session_id=session_id,
+                )
             return
 
         if method == "Network.webSocketCreated":
