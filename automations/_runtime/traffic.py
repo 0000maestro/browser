@@ -173,7 +173,7 @@ class CDPTrafficRecorder:
             "target": self.session_to_target.get(session_id),
             "capture": fact,
         }
-        self.handle.write(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False) + "\n")
+        self.handle.write(json.dumps(envelope, separators=(",", ":")) + "\n")
         self._write_state()
 
     async def capture_response_body(
@@ -372,7 +372,7 @@ class CDPTrafficRecorder:
             "target": self.session_to_target.get(session_id),
             "cdp": raw,
         }
-        self.handle.write(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False) + "\n")
+        self.handle.write(json.dumps(envelope, separators=(",", ":")) + "\n")
         self._observe_network_state(raw)
         self._write_state()
 
@@ -472,7 +472,7 @@ async def record(cdp_url: str, output: Path, state_file: Path, ready_file: Path)
         if not ws_url:
             raise RuntimeError(f"CDP endpoint did not expose webSocketDebuggerUrl: {version_url}")
 
-        async with session.ws_connect(ws_url, heartbeat=20) as ws:
+        async with session.ws_connect(ws_url, heartbeat=20, max_msg_size=32 * 1024 * 1024) as ws:
             recorder = CDPTrafficRecorder(ws, output, state_file)
             reader = asyncio.create_task(recorder.reader())
             try:
