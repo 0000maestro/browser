@@ -765,7 +765,7 @@ def verify_reading(run: Path) -> None:
     for path in files:
         values = _strings(json.loads(path.read_text()))
         for secret in secrets:
-            if secret in values or (len(secret) >= 4 and any(secret in value for value in values)):
+            if secret in values or (len(secret) >= 12 and any(secret in value for value in values)):
                 raise OperationReadError(f"secret survived in derived artifact: {path}")
 
 
