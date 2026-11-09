@@ -32,6 +32,7 @@ SERVER_COOKIE_SECRET = "server-cookie-secret"
 RESPONSE_SECRET = "response-token-secret"
 GQL_VARIABLE_SECRET = "gql-var-secret"
 GQL_LITERAL_SECRET = "literal-secret"
+SIGNED_SECRET = "signed-query-secret"
 
 
 def raw(seq: int, method: str, request_id: str, params: dict, *, session: str = "session-1") -> dict:
@@ -86,7 +87,7 @@ def fixture(run: Path) -> None:
                 "type": "XHR",
                 "request": {
                     "method": "GET",
-                    "url": f"https://api.example.test/users/123456?api_key={AUTH_SECRET}",
+                    "url": f"https://api.example.test/users/123456?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
                     "headers": {
                         "Authorization": f"Bearer {AUTH_SECRET}",
                         "Cookie": f"session={COOKIE_SECRET}",
@@ -102,7 +103,7 @@ def fixture(run: Path) -> None:
                 "type": "XHR",
                 "request": {
                     "method": "GET",
-                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}",
+                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
                     "headers": {
                         "Authorization": f"Bearer {AUTH_SECRET}",
                         "Cookie": f"session={COOKIE_SECRET}",
@@ -118,7 +119,7 @@ def fixture(run: Path) -> None:
             {
                 "type": "XHR",
                 "response": {
-                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}",
+                    "url": f"https://api.example.test/users/654321?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
                     "status": 200,
                     "mimeType": "application/json",
                     "headers": {"Set-Cookie": f"refresh={SERVER_COOKIE_SECRET}; Path=/; HttpOnly"},
@@ -142,7 +143,7 @@ def fixture(run: Path) -> None:
                 "type": "XHR",
                 "request": {
                     "method": "GET",
-                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}",
+                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
                     "headers": {
                         "Authorization": f"Bearer {AUTH_SECRET}",
                         "Cookie": f"session={COOKIE_SECRET}",
@@ -158,7 +159,7 @@ def fixture(run: Path) -> None:
             {
                 "type": "XHR",
                 "response": {
-                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}",
+                    "url": f"https://api.example.test/users/987654?api_key={AUTH_SECRET}&signature={SIGNED_SECRET}",
                     "status": 200,
                     "mimeType": "application/json",
                     "headers": {},
@@ -461,6 +462,7 @@ try:
     openapi_a = read(step_a / "openapi" / "api.example.test.json")
     user_schema = openapi_a["paths"]["/users/{id}"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
     assert "token" in user_schema["properties"]
+    assert "required" not in user_schema
 
     # 2. Redirects remain one call, and final URL participates in templated grouping.
     assert user_a["provenance"][0]["redirects"] == 1
@@ -487,6 +489,12 @@ try:
     nobody = openapi_c["paths"]["/nobody"]["get"]["responses"]["200"]
     assert nobody["x-uklok-body-evidence"] == [{"status": "unobserved"}]
     assert "content" not in nobody
+    user_query = next(
+        item for item in openapi_a["paths"]["/users/{id}"]["get"]["parameters"]
+        if item["in"] == "query" and item["name"] == "api_key"
+    )
+    assert user_query["required"] is False
+    assert user_query["x-uklok-observed-on-all-calls"] is True
 
     # 6. Reused secrets are lifted once and referenced by placeholders everywhere.
     secrets_text = (run / "traffic" / "secrets.env").read_text(encoding="utf-8")
@@ -495,7 +503,16 @@ try:
     auth_a = read(step_a / "auth.json")["dependencies"]
     auth_header = next(item for item in auth_a if item["kind"] == "header" and item["name"] == "Authorization")
     auth_query = next(item for item in auth_a if item["kind"] == "query" and item["name"] == "api_key")
+    signed_query = next(item for item in auth_a if item["kind"] == "query" and item["name"] == "signature")
     assert auth_header["placeholders"] == auth_query["placeholders"]
+    assert signed_query["placeholders"]
+    assert any(
+        rule["scope"] == "operation"
+        and rule["context"] == user_a["key"]
+        and rule["kind"] == "header"
+        and rule["name"] == "Authorization"
+        for rule in auth_a["coarse_rules"]
+    )
     for secret in (
         AUTH_SECRET,
         COOKIE_SECRET,
@@ -503,6 +520,7 @@ try:
         RESPONSE_SECRET,
         GQL_VARIABLE_SECRET,
         GQL_LITERAL_SECRET,
+        SIGNED_SECRET,
     ):
         assert secret in secrets_text
         for path, value in derived_bytes(run).items():

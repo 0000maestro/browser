@@ -303,9 +303,9 @@ The derived surface is deterministic and observed-only:
                 └── <host>.json
 ~~~
 
-REST operations group by method + host + generic templated path. GraphQL keeps a separate semantic identity by operation name (or a stable anonymous-operation hash), so operations sharing one POST endpoint do not collapse into one inferred behavior. JSON request/response schemas are inferred only from observed content; missing bodies remain `unobserved`. OpenAPI and GraphQL outputs explicitly describe an observed surface, not complete server documentation.
+REST operations group by method + host + generic templated path. GraphQL keeps a separate semantic identity by operation name (or a stable anonymous-operation hash), so operations sharing one POST endpoint do not collapse into one inferred behavior. JSON request/response schemas are inferred only from observed content; missing bodies remain `unobserved`. Field/query presence is recorded as observation metadata and is not promoted to contract-level requiredness from one captured run. OpenAPI and GraphQL outputs explicitly describe an observed surface, not complete server documentation.
 
-Credential/session values are lifted out of the reading into `traffic/secrets.env`, which is inside the already-gitignored run. Derived artifacts retain dependency names plus placeholders, cookie names and response-set cookie names, but not the concrete lifted values. The reading fails closed if a lifted value survives in derived JSON.
+Credential/session values are lifted out of the reading into `traffic/secrets.env`, which is inside the already-gitignored run. Derived artifacts retain dependency names plus placeholders, cookie names and response-set cookie names, but not the concrete lifted values. The run index also emits the coarsest credential scope justified by the observed calls (global, domain, operation, goal, or partial) instead of treating one incident header set as a reusable rule. The reading fails closed if a lifted value survives in derived JSON.
 
 For one-invocation capture plus reading, opt in explicitly:
 

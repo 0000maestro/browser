@@ -12,11 +12,11 @@ from urllib.parse import parse_qsl, urlsplit
 API_TYPES = {"XHR", "Fetch", "EventSource"}
 ASSET_TYPES = {"Stylesheet", "Image", "Media", "Font", "Script"}
 JSON_MARKERS = ("application/json", "+json", "application/graphql-response+json")
-SENSITIVE = re.compile(r"(authorization|auth|api.?key|token|secret|password|passwd|session|cookie|credential|csrf|xsrf)", re.I)
+SENSITIVE = re.compile(r"(authorization|auth|api.?key|access.?key|token|secret|client.?secret|password|passwd|session|cookie|credential|csrf|xsrf|signature|signed|hmac)", re.I)
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f-]{27,}$", re.I)
 MIXED_ID = re.compile(r"^[A-Za-z0-9_-]{12,}$")
 GQL_NAME = re.compile(r"\b(?:query|mutation|subscription)\s+([_A-Za-z][_0-9A-Za-z]*)")
-GQL_SECRET_ARG = re.compile(r"""([_A-Za-z][_0-9A-Za-z]*(?:token|secret|password|passwd|api_?key|session|credential|csrf|xsrf)[_0-9A-Za-z]*)\s*:\s*("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[-+]?\d+(?:\.\d+)?|true|false|null)""", re.I)
+GQL_SECRET_ARG = re.compile(r"""([_A-Za-z][_0-9A-Za-z]*(?:token|secret|password|passwd|api_?key|access_?key|client_?secret|session|credential|csrf|xsrf|signature|signed|hmac)[_0-9A-Za-z]*)\s*:\s*("(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[-+]?\d+(?:\.\d+)?|true|false|null)""", re.I)
 
 
 class OperationReadError(RuntimeError):
@@ -416,7 +416,12 @@ def _schema(value: Any) -> dict[str, Any]:
         return {"type": "array", "items": _merge_schema([_schema(v) for v in value]) if value else {}}
     if isinstance(value, dict):
         props = {str(k): _schema(v) for k, v in sorted(value.items(), key=lambda x: str(x[0]))}
-        return {"type": "object", "properties": props, "required": sorted(props), "additionalProperties": True}
+        return {
+            "type": "object",
+            "properties": props,
+            "additionalProperties": True,
+            "x-uklok-observed-present": sorted(props),
+        }
     return {}
 
 
@@ -430,11 +435,16 @@ def _merge_schema(values: list[dict[str, Any]]) -> dict[str, Any]:
     if types == ["object"]:
         keys = sorted({k for v in values for k in (v.get("properties") or {})})
         props = {k: _merge_schema([v["properties"][k] for v in values if k in (v.get("properties") or {})]) for k in keys}
-        required = sorted(set.intersection(*[set(v.get("required") or []) for v in values]))
-        out = {"type": "object", "properties": props, "additionalProperties": True}
-        if required:
-            out["required"] = required
-        return out
+        observed_on_all = sorted(
+            set.intersection(*[set((v.get("properties") or {}).keys()) for v in values])
+        )
+        return {
+            "type": "object",
+            "properties": props,
+            "additionalProperties": True,
+            "x-uklok-observed-present": keys,
+            "x-uklok-observed-on-all": observed_on_all,
+        }
     if types == ["array"]:
         return {"type": "array", "items": _merge_schema([v.get("items") or {} for v in values])}
     return {"type": types[0] if len(types) == 1 else types}
@@ -475,6 +485,69 @@ def _dependency_names(calls: list[dict[str, Any]], deps: dict[str, list[dict[str
         {"kind": kind, "name": name, "placeholders": sorted(grouped[(kind, name)])}
         for kind, name in sorted(grouped)
     ]
+
+
+def _credential_rules(calls: list[dict[str, Any]], deps: dict[str, list[dict[str, str]]]) -> list[dict[str, Any]]:
+    call_by_key = {call["key"]: call for call in calls}
+    all_calls = set(call_by_key)
+    domains: dict[str, set[str]] = {}
+    goals: dict[str, set[str]] = {}
+    operations: dict[str, set[str]] = {}
+    for call in calls:
+        domains.setdefault(_identity(call)["host"], set()).add(call["key"])
+        if call.get("owner"):
+            goals.setdefault(str(call["owner"]), set()).add(call["key"])
+        operations.setdefault(_identity(call)["key"], set()).add(call["key"])
+
+    occurrences: dict[tuple[str, str], set[str]] = {}
+    placeholders: dict[tuple[str, str], set[str]] = {}
+    for call in calls:
+        for dependency in deps.get(call["key"], []):
+            key = (dependency["kind"], dependency["name"])
+            occurrences.setdefault(key, set()).add(call["key"])
+            placeholders.setdefault(key, set()).add(dependency["placeholder"])
+
+    rules: list[dict[str, Any]] = []
+    for dep_key in sorted(occurrences):
+        kind, name = dep_key
+        remaining = set(occurrences[dep_key])
+
+        def add_rule(scope: str, context: str, covered: set[str]) -> None:
+            rules.append(
+                {
+                    "scope": scope,
+                    "context": context,
+                    "kind": kind,
+                    "name": name,
+                    "placeholders": sorted(placeholders[dep_key]),
+                    "observed_calls": len(covered),
+                    "observed_on_all_context_calls": True,
+                }
+            )
+
+        if all_calls and all_calls <= remaining:
+            add_rule("global", "*", all_calls)
+            remaining -= all_calls
+        else:
+            for scope, contexts in (("domain", domains), ("operation", operations), ("goal", goals)):
+                for context, context_calls in sorted(contexts.items()):
+                    if context_calls and context_calls <= remaining:
+                        add_rule(scope, context, context_calls)
+                        remaining -= context_calls
+
+        if remaining:
+            rules.append(
+                {
+                    "scope": "partial",
+                    "context": "observed-calls",
+                    "kind": kind,
+                    "name": name,
+                    "placeholders": sorted(placeholders[dep_key]),
+                    "request_keys": sorted(remaining),
+                    "observed_on_all_context_calls": False,
+                }
+            )
+    return rules
 
 
 def _endpoint_records(calls: list[dict[str, Any]], deps: dict[str, list[dict[str, str]]], steps_by_key: dict[str, set[str]]) -> list[dict[str, Any]]:
@@ -572,7 +645,19 @@ def _openapi(host: str, calls: list[dict[str, Any]], deps: dict[str, list[dict[s
         ident = _identity(items[0])
         params = [{"name": n, "in": "path", "required": True, "schema": {"type": "string"}} for n in ident["path_params"]]
         query_names = sorted({n for c in items for n, _ in parse_qsl(urlsplit(str(c.get("url") or "")).query, keep_blank_values=True)})
-        params.extend({"name": n, "in": "query", "required": all(n in {q for q, _ in parse_qsl(urlsplit(str(c.get("url") or "")).query, keep_blank_values=True)} for c in items), "schema": {"type": "string"}} for n in query_names)
+        params.extend(
+            {
+                "name": n,
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string"},
+                "x-uklok-observed-on-all-calls": all(
+                    n in {q for q, _ in parse_qsl(urlsplit(str(c.get("url") or "")).query, keep_blank_values=True)}
+                    for c in items
+                ),
+            }
+            for n in query_names
+        )
         request_schemas = [_schema(v) for c in items for v in [_parse_json(c.get("post_data"))] if v is not None]
         statuses = sorted({str(c["status"]) for c in items if c["status"] is not None}) or ["default"]
         responses = {}
@@ -687,6 +772,7 @@ def derive_operations(run: Path, step: str | None = None) -> dict[str, Any]:
     assembled, boundaries = _assemble(run)
     calls = [call for call in assembled if _api(call)]
     secrets, deps = _collect(calls)
+    credential_rules = _credential_rules(calls, deps)
     grouped = _group(calls)
     steps_by_key = {key: {c["owner"] for c in items if c["owner"]} for key, items in grouped.items()}
     known_steps = {b["step"] for b in boundaries}
@@ -714,6 +800,7 @@ def derive_operations(run: Path, step: str | None = None) -> dict[str, Any]:
         "unattributed_count": sum(not c["owner"] for c in calls),
         "operation_counts": operation_counts,
         "operation_keys": sorted(operation_counts),
+        "credential_rules": credential_rules,
         "unattributed": [_provenance(c) for c in calls if not c["owner"]],
         "steps": {},
         "integrity": {"assembled_api_calls": len(calls), "grouped_call_count": sum(operation_counts.values()), "reconciles": sum(operation_counts.values()) == len(calls)},
@@ -740,7 +827,22 @@ def derive_operations(run: Path, step: str | None = None) -> dict[str, Any]:
         base = directory.relative_to(run) / "operations"
         keys = sorted(_group(step_calls))
         _write(run, str(base / "endpoints.json"), {"schema": "uklok.browser.operation-reading/v1", "step": step_id, "operations": _endpoint_records(step_calls, deps, steps_by_key)})
-        _write(run, str(base / "auth.json"), {"schema": "uklok.browser.operation-auth/v1", "step": step_id, "dependencies": _dependency_names(step_calls, deps)})
+        step_dependencies = _dependency_names(step_calls, deps)
+        step_dependency_keys = {(item["kind"], item["name"]) for item in step_dependencies}
+        _write(
+            run,
+            str(base / "auth.json"),
+            {
+                "schema": "uklok.browser.operation-auth/v1",
+                "step": step_id,
+                "dependencies": step_dependencies,
+                "coarse_rules": [
+                    rule
+                    for rule in credential_rules
+                    if (rule["kind"], rule["name"]) in step_dependency_keys
+                ],
+            },
+        )
         _write(run, str(base / "goal.json"), {
             "schema": "uklok.browser.operation-goal/v1",
             "step": step_id,
