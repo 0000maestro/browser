@@ -192,11 +192,14 @@ The run root is an **index**, not a flat artifact bucket:
 │   └── 02-<step-id>/
 │       ├── checkpoint.json
 │       └── <step evidence>
+├── operations/
+│   └── index.json
 └── traffic/
     ├── events.jsonl
     ├── checkpoints.jsonl
     ├── state.json
-    └── capture.log
+    ├── capture.log
+    └── secrets.env
 ~~~
 
 The directory tree itself is part of the repair interface:
@@ -234,7 +237,7 @@ The run then contains:
 └── capture.log
 ~~~
 
-`traffic/events.jsonl` is the raw evidence. Every Chrome `Network.*` event receives a monotonically increasing `seq`, capture time and target metadata. The recorder uses its own browser-level CDP connection; it does **not** drain Browser Harness's event buffer and therefore does not steal network events from automation helpers.
+`traffic/events.jsonl` is the recorder evidence stream. Every Chrome `Network.*` event receives a monotonically increasing `seq`, capture time and target metadata under its `cdp` envelope. For operation-shaped exchanges, the recorder may also append a bounded response-body fact under a separate `capture` envelope after the terminal Chrome event. Those facts are recorder observations, never forged Chrome events. The recorder uses its own browser-level CDP connection; it does **not** drain Browser Harness's event buffer and therefore does not steal network events from automation helpers.
 
 `traffic/state.json` is an internal live snapshot owned by the recorder. It tracks active requests, persistent streams and cumulative request outcomes so the runner can reason about in-flight work without parsing the append-only capture.
 
@@ -244,7 +247,7 @@ The run then contains:
 
 The current runtime defaults are:
 
-- a request opened by `Network.requestWillBeSent` blocks the boundary until it reaches `loadingFinished` or `loadingFailed`;
+- a request opened by `Network.requestWillBeSent` blocks the boundary until its terminal event closes; for an operation-shaped response, closure also waits for the recorder's bounded response-body attempt so later derived reading can distinguish captured, oversized and unavailable content;
 - after no blocking request/lifecycle change is observed for **750 ms**, the boundary is `quiet`;
 - EventSource plus open WebSocket/WebTransport connections are **persistent carry-over** and do not block forever;
 - an ordinary request already active for **30 s** is classified **stale carry-over** rather than becoming an infinite barrier;
@@ -268,7 +271,51 @@ Do not add arbitrary `wait()` calls to every automation in an attempt to recreat
 
 A request that remains stale, persistent, or previously timed-out across a boundary is listed as carry-over; its later raw events keep their sequence numbers and can therefore be connected across adjacent segments during repair or later learning.
 
-This is protocol-event capture, not packet capture: response bodies are not fetched separately. Chrome events can still contain request/response headers, cookies and request post data. Treat all three traffic artifacts as sensitive browser-session evidence. They stay under gitignored `.runs/` and should only be enabled when they change diagnosis or proof.
+This remains protocol/CDP evidence rather than packet capture. Chrome events can contain request/response headers, cookies and request post data. The recorder additionally attempts `Network.getResponseBody` only for operation-shaped responses and only up to the runtime body limit; oversized, unavailable and failed acquisitions are explicit facts rather than invented content. Treat the traffic directory as sensitive browser-session evidence. It stays under gitignored `.runs/` and should only be enabled when it changes diagnosis or proof.
+
+### Derived operation reading
+
+Captured traffic can be studied explicitly without replaying requests or modifying automation knowledge:
+
+~~~bash
+./bin/browser-automation operations .runs/<automation>/<run-id>
+./bin/browser-automation operations .runs/<automation>/<run-id> --step <id>
+~~~
+
+The reading consumes only the existing `traffic/checkpoints.jsonl` index plus recorder evidence. A call belongs to the checkpoint containing its **opening** `requestWillBeSent` sequence. Redirects keep one request identity and final URL; later response/body facts stay attached by request identity even when their sequence falls in another checkpoint. A response whose opening event is absent remains unattributed.
+
+The derived surface is deterministic and observed-only:
+
+~~~text
+.runs/<automation>/<run-id>/
+├── operations/
+│   └── index.json
+└── steps/
+    └── NN-<step>/
+        └── operations/
+            ├── endpoints.json
+            ├── auth.json
+            ├── goal.json
+            ├── graphql/
+            │   ├── operations.json
+            │   └── observed-schema.json
+            └── openapi/
+                └── <host>.json
+~~~
+
+REST operations group by method + host + generic templated path. GraphQL keeps a separate semantic identity by operation name (or a stable anonymous-operation hash), so operations sharing one POST endpoint do not collapse into one inferred behavior. JSON request/response schemas are inferred only from observed content; missing bodies remain `unobserved`. OpenAPI and GraphQL outputs explicitly describe an observed surface, not complete server documentation.
+
+Credential/session values are lifted out of the reading into `traffic/secrets.env`, which is inside the already-gitignored run. Derived artifacts retain dependency names plus placeholders, cookie names and response-set cookie names, but not the concrete lifted values. The reading fails closed if a lifted value survives in derived JSON.
+
+For one-invocation capture plus reading, opt in explicitly:
+
+~~~bash
+./bin/browser-automation run <id> --capture-traffic --derive-operations
+~~~
+
+`--derive-operations` requires `--capture-traffic` and uses the same derivation owner as the explicit `operations` command after a successful automation run. Reading failure is reported separately from the automation's functional result; it does not retroactively redefine a passed checkpoint.
+
+These artifacts are reverse-engineering evidence. They do **not** replay requests, generate an executable client, edit `contract.toml`, perform GraphQL introspection, or promote an observed operation into reusable automation behavior.
 
 ## Checkpoints
 
