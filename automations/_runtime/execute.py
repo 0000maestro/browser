@@ -189,6 +189,7 @@ def _traffic_item(value: dict[str, Any], now_epoch: float) -> dict[str, Any]:
         "method": value.get("method"),
         "url": value.get("url"),
         "response_status": value.get("response_status"),
+        "phase": value.get("phase"),
     }
     if age_seconds is not None:
         item["age_ms"] = round(age_seconds * 1000)
@@ -213,6 +214,9 @@ def _classify_traffic_state(
         if target_id and request.get("target_id") != target_id:
             continue
         item = _traffic_item(request, now_epoch)
+        if request.get("phase") == "body_pending":
+            blocking.append(item)
+            continue
         if request.get("type") in PERSISTENT_RESOURCE_TYPES:
             persistent.append(item)
             continue

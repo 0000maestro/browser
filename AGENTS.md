@@ -38,7 +38,10 @@ Treat these as current implementation constraints unless the task explicitly cha
 - local `.runs/` evidence is transient and gitignored; durable learned behavior belongs in the automation contract/module;
 - a run root is an index: checkpoint-owned evidence belongs under ordered `steps/<ordinal>-<id>/`; cross-step network evidence belongs under `traffic/`; do not flatten correlated artifacts back into the root;
 - the runtime owns step-local placement (`ctx["run_dir"]`, `artifact_path()`, screenshot normalization) so individual automations do not re-own that architecture;
-- when `--capture-traffic` is active, checkpoint traffic settling belongs to the shared runner, not individual automation sleeps; degraded traffic evidence is recorded without silently redefining functional success.
+- when `--capture-traffic` is active, checkpoint traffic settling belongs to the shared runner, not individual automation sleeps; degraded traffic evidence is recorded without silently redefining functional success;
+- the raw traffic recorder owns CDP facts and may append bounded response-body observations for operation-shaped responses; body acquisition closes through that same settle owner and must never be represented as a forged Chrome event;
+- derived operation readings use the existing checkpoint index: ownership follows the opening `requestWillBeSent` sequence, while later response/body evidence joins by request identity; do not invent a second traffic split;
+- operation readings are observed reverse-engineering evidence, not executable clients or automation knowledge; concrete credential/session values belong only in the run-local `traffic/secrets.env`, and derived output must fail closed on secret leakage.
 
 ## Where truth lives
 
@@ -54,6 +57,7 @@ Treat these as current implementation constraints unless the task explicitly cha
 | How should an agent reason about this runtime? | `.agents/skills/browser-runtime/SKILL.md` |
 | How should an agent operate healthy pages? | `docs/browser-use.md` + generated `.agents/skills/browser-use/SKILL.md` |
 | How are deterministic browser automations defined/repaired? | `docs/automations.md` + `.agents/skills/browser-automation/SKILL.md` |
+| How are captured API operations derived/studied? | `docs/automations.md` — Derived operation reading |
 
 Do not duplicate these rules into new files. Update the natural owner and repair inbound links when the contract changes.
 

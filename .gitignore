@@ -2,3 +2,5 @@
 .venv/
 .runs/
 .agents/skills/browser-use/
+__pycache__/
+*.py[cod]

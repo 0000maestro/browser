@@ -103,6 +103,34 @@ assert [item["request_id"] for item in classified["blocking"]] == ["fetch"]
 assert [item["request_id"] for item in classified["stale"]] == ["stale"]
 assert {item["request_id"] for item in classified["persistent"]} == {"events", "ws"}
 assert classified["carryover"] == []
+
+body_pending = execute._classify_traffic_state(
+    state(
+        latest_seq=8,
+        lifecycle_seq=5,
+        active=[
+            {
+                "key": "page:body",
+                "request_id": "body",
+                "target_id": "controlled",
+                "type": "Fetch",
+                "phase": "body_pending",
+                "method": "GET",
+                "url": "https://example.test/body",
+                "started_at": now - 60,
+            }
+        ],
+    ),
+    now_epoch=now,
+    stale_after_seconds=30,
+    target_id="controlled",
+    carryover_keys={"page:body"},
+)
+assert [item["request_id"] for item in body_pending["blocking"]] == ["body"]
+assert body_pending["blocking"][0]["phase"] == "body_pending"
+assert body_pending["stale"] == []
+assert body_pending["carryover"] == []
+
 assert execute._counter_delta(
     {"failed": 2, "http_error": 1},
     {"failed": 1, "http_error": 0},

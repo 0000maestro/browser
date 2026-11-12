@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from operations import OperationReadError, derive_operations
+
 ROOT = Path(__file__).resolve().parents[2]
 AUTOMATIONS = ROOT / "automations"
 RUNS = ROOT / ".runs"
@@ -45,6 +47,38 @@ def _contract_dir(name: str) -> Path:
     if path.parent != AUTOMATIONS.resolve():
         raise ContractError("automation path escaped automations/")
     return path
+
+
+def _operation_run_dir(raw: str | Path) -> Path:
+    path = Path(raw)
+    if not path.is_absolute():
+        path = ROOT / path
+    path = path.resolve()
+    runs = RUNS.resolve()
+    if path == runs or runs not in path.parents:
+        raise ContractError("operation reading run directory must stay under .runs/")
+    if not path.is_dir():
+        raise ContractError(f"run directory does not exist: {path}")
+    return path
+
+
+def _derive_run_operations(run_dir: Path, step: str | None = None) -> dict[str, Any]:
+    try:
+        return derive_operations(run_dir, step=step)
+    except OperationReadError as exc:
+        raise ContractError(str(exc)) from exc
+
+
+def read_operations(raw_run_dir: str | Path, step: str | None = None) -> int:
+    run_dir = _operation_run_dir(raw_run_dir)
+    index = _derive_run_operations(run_dir, step=step)
+    relative = run_dir.relative_to(ROOT)
+    print(
+        f"OPERATIONS {relative} — {index['total_observed_calls']} call(s), "
+        f"{len(index['operation_keys'])} grouped operation(s), "
+        f"{index['unattributed_count']} unattributed"
+    )
+    return 0
 
 
 def _load_contract(name: str) -> tuple[Path, dict[str, Any]]:
@@ -373,7 +407,10 @@ def _run(
     from_step: str | None,
     capture_traffic: bool,
     allow_draft: bool,
+    derive_after_capture: bool = False,
 ) -> int:
+    if derive_after_capture and not capture_traffic:
+        raise ContractError("--derive-operations requires --capture-traffic")
     summary = validate(name)
     contract_path, contract = _load_contract(name)
     status = contract.get("status")
@@ -418,6 +455,12 @@ def _run(
         "from_step": from_step,
         "steps": str((run_dir / "steps").relative_to(ROOT)),
         "capture_traffic": capture_traffic,
+        "derive_operations": derive_after_capture,
+        "operation_reading": {
+            "requested": derive_after_capture,
+            "status": "pending" if derive_after_capture else "disabled",
+            "index": str((run_dir / "operations" / "index.json").relative_to(ROOT)) if derive_after_capture else None,
+        },
         "traffic": str((run_dir / "traffic" / "events.jsonl").relative_to(ROOT)) if capture_traffic else None,
         "traffic_state": str((run_dir / "traffic" / "state.json").relative_to(ROOT)) if capture_traffic else None,
         "traffic_checkpoints": str((run_dir / "traffic" / "checkpoints.jsonl").relative_to(ROOT)) if capture_traffic else None,
@@ -506,6 +549,36 @@ def _run(
         else:
             manifest["traffic_observability"] = {"requested": True, "status": "complete"}
 
+    operation_reading_error: str | None = None
+    if derive_after_capture:
+        if proc.returncode != 0:
+            manifest["operation_reading"] = {
+                "requested": True,
+                "status": "skipped",
+                "error": "automation did not succeed",
+                "index": str((run_dir / "operations" / "index.json").relative_to(ROOT)),
+            }
+        else:
+            try:
+                index = _derive_run_operations(run_dir)
+            except ContractError as exc:
+                operation_reading_error = str(exc)
+                manifest["operation_reading"] = {
+                    "requested": True,
+                    "status": "failed",
+                    "error": operation_reading_error,
+                    "index": str((run_dir / "operations" / "index.json").relative_to(ROOT)),
+                }
+            else:
+                manifest["operation_reading"] = {
+                    "requested": True,
+                    "status": "complete",
+                    "observed_calls": index["total_observed_calls"],
+                    "operation_keys": len(index["operation_keys"]),
+                    "unattributed_count": index["unattributed_count"],
+                    "index": str((run_dir / "operations" / "index.json").relative_to(ROOT)),
+                }
+
     manifest["ended_at"] = _utc_now()
     manifest["status"] = "succeeded" if proc.returncode == 0 else "failed"
     _json_dump(run_dir / "run.json", manifest)
@@ -537,8 +610,13 @@ def _run(
 
     if proc.returncode == 0:
         print(f"SUCCESS {name} — {run_dir.relative_to(ROOT)}/result.json")
+        if derive_after_capture and operation_reading_error is None:
+            print(f"OPERATIONS {name} — {run_dir.relative_to(ROOT)}/operations/index.json")
     else:
         print(f"FAILED  {name} — {failure_path.relative_to(ROOT)}", file=sys.stderr)
+    if operation_reading_error is not None:
+        print(f"OPERATIONS FAILED {name} — {operation_reading_error}", file=sys.stderr)
+        return 3
     return proc.returncode
 
 
@@ -554,6 +632,13 @@ def build_parser() -> argparse.ArgumentParser:
     new_parser = commands.add_parser("new", help="Create an automation from the contract-first template")
     new_parser.add_argument("name")
 
+    operations_parser = commands.add_parser(
+        "operations",
+        help="Derive a secret-free observed API operation reading from one captured run",
+    )
+    operations_parser.add_argument("run_dir", type=Path)
+    operations_parser.add_argument("--step", help="Rewrite only one checkpoint-local reading")
+
     run_parser = commands.add_parser("run", help="Run an automation deterministically through Browser Use")
     run_parser.add_argument("name")
     run_parser.add_argument("--input", action="append", default=[], metavar="KEY=VALUE")
@@ -568,6 +653,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Record raw Chrome Network.* CDP events under this run's traffic/ directory",
     )
+    run_parser.add_argument(
+        "--derive-operations",
+        action="store_true",
+        help="After a successful captured run, derive the secret-free operation reading",
+    )
 
     return parser
 
@@ -581,6 +671,8 @@ def main() -> int:
             return validate_many(args.name)
         if args.command == "new":
             return new_automation(args.name)
+        if args.command == "operations":
+            return read_operations(args.run_dir, step=args.step)
         if args.command == "run":
             return _run(
                 args.name,
@@ -588,6 +680,7 @@ def main() -> int:
                 args.from_step,
                 args.capture_traffic,
                 args.allow_draft,
+                args.derive_operations,
             )
     except ContractError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
