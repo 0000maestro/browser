@@ -21,6 +21,7 @@ The Compose files are intentionally layered:
 compose.yaml         canonical service; Docker-network only
 local.yaml           local build + loopback host ports + local sandbox fallback
 bind-profile.yaml    host-backed, container-owned Linux profile
+host.yaml            Linux VM host: build + loopback host ports + seccomp; no sandbox fallback
 ```
 
 Combine only the behavior you need.
@@ -35,6 +36,7 @@ Combine only the behavior you need.
 | Canonical deployment | `compose.yaml` |
 | Local development behavior | `local.yaml` |
 | Host-backed profile | `bind-profile.yaml` |
+| Host deployment (VM ports, seccomp) | `host.yaml` |
 | Runtime acceptance | `tests/smoke.sh` |
 | PR validation | `.github/workflows/ci.yml` |
 | Package publication | `.github/workflows/publish.yml` |

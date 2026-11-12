@@ -16,6 +16,8 @@ Preferred order:
 
 Do not bind CDP or noVNC directly to a public interface.
 
+The host overlay (`host.yaml`) binds both ports to `127.0.0.1` only. The host's tunnel is the only ingress.
+
 ## Sandbox rule
 
 Production/base behavior:
@@ -41,6 +43,12 @@ docker compose -f compose.yaml -f local.yaml up --build -d
 ```
 
 Any `--no-sandbox` execution weakens Chrome isolation.
+
+## Host overlay seccomp rule
+
+`host.yaml` sets `seccomp=unconfined` on the browser container. Docker's default seccomp profile blocks the user-namespace calls that Chrome's sandbox needs. The failure shows as `Failed to move to new namespace` and a black noVNC screen. Unconfined seccomp removes that filter for this container only.
+
+This weakens container isolation, not Chrome's. Chrome's sandbox stays enabled, and the host overlay pins `CHROME_ALLOW_SANDBOX_FALLBACK=0`. Do not solve the namespace failure with `--no-sandbox`. Replacing `unconfined` with a narrower custom profile is the next hardening step and is not done yet.
 
 ## VNC password
 

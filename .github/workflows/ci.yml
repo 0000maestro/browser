@@ -11,6 +11,7 @@ on:
       - "compose.yaml"
       - "local.yaml"
       - "bind-profile.yaml"
+      - "host.yaml"
       - ".env.example"
       - ".github/workflows/ci.yml"
       - ".github/workflows/publish.yml"
@@ -33,6 +34,7 @@ jobs:
           docker compose -f compose.yaml -f local.yaml config --quiet
           docker compose -f compose.yaml -f bind-profile.yaml config --quiet
           docker compose -f compose.yaml -f local.yaml -f bind-profile.yaml config --quiet
+          docker compose -f compose.yaml -f host.yaml config --quiet
 
       - name: Build image
         run: docker build --pull --platform=linux/amd64 --tag uklok/browser:test .
