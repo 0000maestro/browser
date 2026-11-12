@@ -1,0 +1,29 @@
+# Host overlay: the canonical service on a Linux VM, published on loopback only.
+#
+#   docker compose -f compose.yaml -f host.yaml up --build -d
+#
+# Ingress is the host's Cloudflare Tunnel, not Docker. Ports bind to 127.0.0.1
+# only. The ports are declared here rather than inherited from local.yaml so
+# production never depends on the local overlay's sandbox fallback.
+#
+# seccomp=unconfined: Docker's default profile blocks the user-namespace
+# syscalls Chrome's sandbox needs ("Failed to move to new namespace").
+# Chrome's own sandbox stays enabled. See docs/security.md.
+services:
+  browser:
+    build:
+      context: .
+    image: uklok/browser:host
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      CHROME_ALLOW_SANDBOX_FALLBACK: "0"
+    ports:
+      - "127.0.0.1:${NOVNC_HOST_PORT:-6080}:6080"
+      - "127.0.0.1:${CDP_HOST_PORT:-9222}:9222"
+
+volumes:
+  chrome-profile:
+    # Fixed name. The project-prefixed default changes with the checkout
+    # directory and would orphan the container-owned profile.
+    name: browser-profile

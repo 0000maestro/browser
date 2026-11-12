@@ -72,9 +72,19 @@ http://browser:6080
 
 Set `BROWSER_IMAGE` to an immutable `sha-*` or full semantic-version tag for deployments that require reproducibility.
 
+## Host deployment on a Linux VM
+
+Run the host overlay. It builds from this checkout and publishes both ports on loopback only:
+
+```bash
+docker compose -f compose.yaml -f host.yaml up --build -d
+```
+
+Ingress belongs to the host's tunnel. The overlay needs the seccomp rule in [Security](security.md#host-overlay-seccomp-rule).
+
 ## Remote human access
 
-Use the local overlay on the remote host and tunnel the loopback ports:
+Tunnel the loopback ports of the host overlay from your machine:
 
 ```bash
 ssh -N \

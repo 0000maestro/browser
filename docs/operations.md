@@ -30,6 +30,8 @@ chrome entered FATAL state
 
 On the explicit local overlay, the browser wrapper detects that known namespace failure and retries with `--no-sandbox`. Base/production does not.
 
+On a Linux host, the namespace failure comes from Docker's default seccomp profile. Use `host.yaml`, which sets `seccomp=unconfined` and keeps the sandbox on. See [Security](security.md#host-overlay-seccomp-rule).
+
 Also verify:
 
 ```bash
